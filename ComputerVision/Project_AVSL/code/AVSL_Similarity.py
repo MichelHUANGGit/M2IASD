@@ -15,7 +15,6 @@ class AVSL_Similarity(nn.Module):
             topk=32,
             momentum=0.5,
             p=2,
-            # split_num=10
         ):
         super().__init__()
         self.output_channels = output_channels
@@ -25,8 +24,7 @@ class AVSL_Similarity(nn.Module):
         self.topk = topk
         self.momentum = momentum
         self.p = p
-        # self.split_num = split_num
-        
+
         self.register_buffer("proxy_labels", torch.arange(self.num_classes))
         self.is_link_initiated = False
         self.n_layers = len(output_channels)
@@ -67,16 +65,14 @@ class AVSL_Similarity(nn.Module):
             certainty_list,
             embed_list2=None,
             certainty_list2=None,
-            # slice_index=None,
-            # slice_index2=None,
         ):
         '''returns a similarity matrix between the data points in embed_list and the data points in embed_list2'''
         output_dict = dict()
-        for l in range(len(embed_list)):
+        for l in range(self.n_layers):
             '''Compute the pairwise absolute difference between the first batch embedding (emb_list) and the second embedding (emb_list2)
             It uses a cool trick: by adding a dimension and leveraging PyTorch's broadcasting to compute the difference. No need to use loops!'''
-            embed1 = embed_list[l] #[slice_index] if slice_index is not None else embed_list[l]
-            embed2 = embed_list2[l]#[slice_index2] if slice_index2 is not None else embed_list2[l]
+            embed1 = embed_list[l]
+            embed2 = embed_list2[l]
             embed1, embed2 = F.normalize(embed1, self.p, dim=-1), F.normalize(embed2, self.p, dim=-1)
             embed1, embed2 = embed1.unsqueeze(1), embed2.unsqueeze(0) #(B1,R), (B1,R) -> (B1,1,R), (1,B1,R)
             nodes = torch.abs(embed1-embed2).pow(self.p) # |(1,B,R) - (B,1,R)|^2 -> (B1,B2,R)
@@ -92,8 +88,8 @@ class AVSL_Similarity(nn.Module):
                 # normalized edges
                 W /= (torch.sum(W, dim=0, keepdim=True) + 1e-8) #(R,R)
                 '''Computing the probability of unreliability matrix (P in the paper). Using the same trick as for the embeddings'''
-                cert1 = certainty_list[l]#[slice_index] if slice_index is not None else certainty_list[l]
-                cert2 = certainty_list2[l]#[slice_index2] if slice_index2 is not None else certainty_list2[l]
+                cert1 = certainty_list[l]
+                cert2 = certainty_list2[l]
                 eta = cert1.unsqueeze(1) * cert2.unsqueeze(0) #(B1,R) * (B2,R) -> (B1,1,R) * (1,B2,R) -> (B1,B2,R)
                 P = torch.sigmoid(getattr(self, f"alpha_{l}") * eta + getattr(self, f"beta_{l}")) #(B1,B2,R)
                 '''Rectified similarity nodes (delta hat in the paper)'''
@@ -103,7 +99,7 @@ class AVSL_Similarity(nn.Module):
                 nodes_hat = nodes.detach() #(B1,B2,R)
         
         '''Final output (d hat in the paper) i.e. the similarity between the samples'''
-        output_dict["final_sim"] = torch.sum(nodes_hat, dim=-1)
+        output_dict["ovr_sim"] = torch.sum(nodes_hat, dim=-1)
 
         return output_dict
     
@@ -161,7 +157,7 @@ class AVSL_Similarity(nn.Module):
                 embed_list2,
                 certainty_list2,
                 # slice_index=slice_index
-            ).get("final_sim")
+            ).get("ovr_sim")
             # slice_dict = generate_slice(batch_size, self.split_num)
             # for slice_index in slice_dict.values():
             #     print("slice_index",slice_index)
@@ -171,7 +167,7 @@ class AVSL_Similarity(nn.Module):
             #         certainty_list,
             #         certainty_list2,
             #         slice_index=slice_index
-            #     ).get("final_sim")
+            #     ).get("ovr_sim")
             return similarities
 
 

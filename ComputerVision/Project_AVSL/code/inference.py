@@ -3,21 +3,31 @@ from torchvision import transforms
 from tqdm import tqdm
 from dataset import CUB_dataset, CUB_dataset_Test
 from torch.utils.data import DataLoader
-import numpy as np
-from collections import Counter
+import pandas
 
 def precision(K, matrix:torch.tensor, labels:torch.tensor):
-    topK_image_classes = torch.topk(matrix, K, dim=1, largest=False).indices #shape (N,K)
+    '''expects pair-wise similarity matrix'''
+    topK_closest_images = torch.topk(matrix, K, dim=1, largest=False).indices #shape (N,K)
+    # For the N images, take the labels of K closest images
+    topK_closest_labels = torch.zeros_like(topK_closest_images, dtype=torch.int8)
+    for i in range(topK_closest_images.size(0)):
+        for j in range(topK_closest_images.size(1)):
+            topK_closest_labels[i,j] = labels[topK_closest_labels[i,j]]
     labels_extended = labels.repeat(K,1).T #shape (N,K)
-    correctly_retrieved = torch.eq(topK_image_classes, labels_extended).to(torch.float64) #shape(N,K)
+    correctly_retrieved = torch.eq(topK_closest_labels, labels_extended).to(torch.float64) #shape(N,K)
     return correctly_retrieved.mean().item()
 
 def recall(K, matrix:torch.tensor, labels:torch.tensor):
-    topK_image_classes = torch.topk(matrix, K, dim=1, largest=False).indices
+    '''expects pair-wise similarity matrix'''
+    topK_closest_images = torch.topk(matrix, K, dim=1, largest=False).indices #shape (N,K)
+    # For the N images, take the labels of K closest images
+    topK_closest_labels = torch.zeros_like(topK_closest_images, dtype=torch.int8)
+    for i in range(topK_closest_images.size(0)):
+        for j in range(topK_closest_images.size(1)):
+            topK_closest_labels[i,j] = labels[topK_closest_labels[i,j]]
     labels_extended = labels.repeat(K,1).T #shape (N,K)
-    at_least_one_retrieved = (torch.sum(labels_extended == topK_image_classes, dim=1) > 0).to(torch.float64) # shape(N) of bools
-    # print(at_least_one_retrieved.shape)
-    return torch.mean(at_least_one_retrieved, dim=0).item()
+    at_least_one_retrieved = (torch.sum(labels_extended == topK_closest_labels, dim=1) > 0).to(torch.float64) # shape(N) of bools
+    return torch.mean(at_least_one_retrieved).item()
 
 def infer_gallery(
         model,
@@ -47,14 +57,25 @@ def infer_gallery(
                     row_first, row_last = batch1["id"][0], batch1["id"][-1]+1
                     col_first, col_last = batch2["id"][0], batch2["id"][-1]+1
                     # Compute the similarity
-                    similarity_matrix[row_first:row_last, col_first:col_last] = model.forward(images1, None, images2)
+                    similarity_matrix[row_first:row_last, col_first:col_last] = model.forward(images1, None, images2).get("ovr_sim")
 
     # Only keep the upper triangle, the elements on the diagonal should be 0
     similarity_matrix = torch.triu(similarity_matrix, diagonal=1)
     # Add the lower triangle
     similarity_matrix += similarity_matrix.clone().T
 
-    return similarity_matrix
+    return similarity_matrix.cpu()
+
+def validate(model, dataset, batch_size, device, metrics_K, save_matrix=False, name="train"):
+    print(f"Measuring Recall @ K on {name} dataset")
+    labels = torch.tensor(dataset.labels, dtype=torch.int8)
+    similarities = infer_gallery(model, dataset, batch_size, device)
+    if save_matrix:
+        torch.save(similarities, f"{name}_similarities.pt")
+        print(f"Saved {name} similarity matrix!")
+    for metric_K in metrics_K:
+        print("Precision @ %d"%metric_K, precision(metric_K, similarities, labels))
+        print("Recall @ %d"%metric_K, recall(metric_K, similarities, labels))
 
 def infer_queries(
         model,
@@ -81,40 +102,26 @@ def infer_queries(
                 row_first, row_last = batch1["id"][0], batch1["id"][-1]+1
                 col_first, col_last = batch2["id"][0], batch2["id"][-1]+1
                 # Compute the similarity
-                similarity_matrix[row_first:row_last, col_first:col_last] = model.forward(images1, None, images2)
+                similarity_matrix[row_first:row_last, col_first:col_last] = model.forward(images1, None, images2).get("ovr_sim")
 
-    return similarity_matrix
+    return similarity_matrix.cpu()
 
-def KNN(similarity_matrix, gallery_labels, K):
-    # Number of query images
-    M = similarity_matrix.shape[1]
-    similarity_matrix = np.array(similarity_matrix)
-    gallery_labels = np.array(gallery_labels)
-    unique_labels = np.unique(gallery_labels)
-    num_classes = len(unique_labels)
+def get_predictions(similarity_matrix, gallery_labels, K, test_paths):
+    topk_closest_images = torch.topk(similarity_matrix, K, dim=0, largest=False).indices
+    topk_closest_labels = torch.zeros_like(topk_closest_images)
+    for i in range(topk_closest_images.size(0)):
+        for j in range(topk_closest_images.size(1)):
+            topk_closest_labels[i,j] = gallery_labels[topk_closest_images[i,j]]
+    predictions = torch.mode(topk_closest_labels, dim=0).values
+    submissions = []
+    for i in range(topk_closest_images.size(1)):
+        submissions.append([test_paths[i][17:].split(".jpg")[0], predictions[i].item()])
 
-    # Initialize the array to store the probabilities
-    probabilities = np.zeros((M, num_classes))
+    submissions = pandas.DataFrame(submissions, index=None)
+    submissions.rename(columns={0:"ID",1:"Category"}, inplace=True)
+    submissions.to_csv("submissions@%d.csv"%K, sep=",", index=False)
+    
 
-    # Iterate over each query image
-    for i in range(M):
-        # Get the similarity scores for the i-th query image
-        similarities = similarity_matrix[:, i]
-
-        # Find the indices of the top K most similar gallery images
-        top_k_indices = np.argsort(similarities)[-K:]
-
-        # Retrieve the labels of the top K gallery images
-        top_k_labels = gallery_labels[top_k_indices]
-
-        # Count the occurrences of each label among the top K labels
-        label_counts = Counter(top_k_labels)
-
-        # Compute the probability distribution
-        for label, count in label_counts.items():
-            probabilities[i, label] = count / K
-
-    return probabilities
 
 if __name__ == "__main__":
     args = {
@@ -161,12 +168,6 @@ if __name__ == "__main__":
     test_similarity_matrix = infer_queries(model, gallery_dataset, args["batch_size"], query_dataset, args["batch_size"], args["device"])
     torch.save(test_similarity_matrix, "gallery_query_similarity.pt")
     print(test_similarity_matrix.shape)
-
-    # Infer classes on test set :
-    K_neighbors = 20
-    class_probabilities = KNN(test_similarity_matrix, gallery_labels, K_neighbors)
-    class_probabilities.tofile("AVSL_KNN_v0.csv",sep=";")
-
 
 
 

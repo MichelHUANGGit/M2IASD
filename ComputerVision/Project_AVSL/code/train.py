@@ -7,6 +7,7 @@ from tqdm import tqdm
 
 from losses import Proxy_AVSL_Loss
 from models import AVSL
+from model import AVSL_Similarity
 from dataset import CUB_dataset
 
 def train(

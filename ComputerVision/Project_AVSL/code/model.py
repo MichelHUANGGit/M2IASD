@@ -1,0 +1,252 @@
+import torch
+import torch.nn as nn
+from torch.nn import functional as F
+from torchvision.models import resnet50, ResNet50_Weights
+from utils import topk_mask
+import math
+
+class AVSL_Graph(nn.Module):
+
+    def __init__(self, emb_dim):
+        super().__init__()
+        self.base_model = resnet50(weights=ResNet50_Weights.IMAGENET1K_V2)
+        self.layers = [self.base_model.layer2, self.base_model.layer3, self.base_model.layer4]
+        self.n_layers = len(self.layers)
+        self.output_channels = [self.layers[i].get_submodule("0.conv3").out_channels for i in range(self.n_layers)] # [512, 1024, 2048]
+        # for l in range(self.n_layers):
+        #     setattr(self, f"lin_proj_{l}", nn.Linear(self.output_channels[l], emb_dim))
+        #     setattr(self, f"pool_{l}", nn.AdaptiveAvgPool2d(1))
+        self.emb_dim = emb_dim
+        self.initiate_params()
+
+    
+    def initiate_params(self):
+        """
+        The maxpooling operation makes the embeddings tend towards a positive bias distribution.
+        """
+        # pooling
+        self.adavgpool = nn.AdaptiveAvgPool2d(1)
+        self.admaxpool = nn.AdaptiveMaxPool2d(1)
+        self.high_CAM = None
+        
+        for l, dim in enumerate(self.output_channels):
+            # 1x1 conv
+            conv = nn.Conv2d(dim, self.emb_dim, kernel_size=(1, 1), stride=(1, 1))
+            nn.init.kaiming_normal_(conv.weight, mode="fan_out")
+            nn.init.constant_(conv.bias, 0)
+            setattr(self, "conv1x1_{}".format(l), conv)
+    
+    def get_embedding(self, feature_map:torch.Tensor, l) -> torch.Tensor:
+        # We take a feature map (B,C,H,W) -> pool -> (B,C,1,1) -> squeeze + linear proj -> (B,r)
+        # return (getattr(self, f"lin_proj_{l}")(
+        #             getattr(self, f"pool_{l}")(feature_map).squeeze((-2,-1))
+        # ))
+        # pooling
+        ap_feat = self.adavgpool(feature_map)
+        mp_feat = self.admaxpool(feature_map)
+        output = ap_feat + mp_feat
+        conv = getattr(self, "conv1x1_{}".format(l))
+        # compute embeddigs
+        output = conv(output)
+        output = output.view(output.size(0), -1)
+        return output
+
+    
+    def _linearize(self, input:torch.Tensor):
+        H, W = input.size(2), input.size(3)
+        out = F.max_unpool2d(
+            *F.adaptive_max_pool2d(
+                input, output_size=1, return_indices=True
+            ),
+            kernel_size=(H, W)
+        ) * H * W
+        return out
+    
+    def get_CAM(self, feature_map:torch.Tensor, l:int):
+        # linearize
+        ap_output = feature_map.detach()
+        am_output = self._linearize(feature_map.detach())
+        output = ap_output + am_output
+        conv = getattr(self, "conv1x1_{}".format(l))
+        # compute cam
+        output = conv(output)
+        return output
+    
+    # def get_CAM(self, feature_map:torch.Tensor, l:int):
+    #     a = getattr(self, f"lin_proj_{l}").weight.view(1,self.output_channels[l],self.emb_dim,1,1) #(C,R) -> (1,C,R,1,1)
+    #     z = feature_map.unsqueeze(2) # (B,C,H,W) -> (B,C,1,H,W)
+    #     return torch.sum(a*z, dim=1) # (1,C,R,1,1) * (B,C,1,H,W) -> (B,C,R,H,W) -> sum(..., dim=1) -> (B,R,H,W)
+
+    def get_certainty(self, CAM:torch.Tensor):
+        return CAM.flatten(2).std(dim=-1)
+
+    def get_link(self, low_CAM: torch.Tensor, high_CAM: torch.Tensor) -> torch.Tensor:
+        '''corresponds to omega hat i.e. the edge values, returns a torch.Tensor of shape (emb_dim,emb_dim)'''
+        low_CAM = low_CAM.detach()
+        high_CAM = high_CAM.detach()
+        # pooling if necessary
+        if low_CAM.size()[2:] != high_CAM.size()[2:]:
+            low_CAM = F.adaptive_avg_pool2d(
+                low_CAM,
+                output_size=high_CAM.size()[2:]
+            )
+        # flatten and normalize
+        low_CAM = F.normalize(low_CAM.flatten(2), p=2, dim=-1)
+        high_CAM = F.normalize(high_CAM.flatten(2), p=2, dim=-1)
+        # compute link
+        batch_size = low_CAM.size(0)
+        links = torch.einsum("bmi, bni -> mn", low_CAM, high_CAM) / batch_size
+        return links
+    
+    def get_graph(self, feature_map, l):
+        embedding = self.get_embedding(feature_map, l)
+        with torch.no_grad():
+            self.low_CAM = self.high_CAM
+            self.high_CAM = self.get_CAM(feature_map, l)
+            certainty = self.get_certainty(self.high_CAM)
+            if l>=1 and self.training:
+                link = self.get_link(self.low_CAM, self.high_CAM)
+            else:
+                link = None
+        return embedding, certainty, link, feature_map
+    
+    def forward(self, x:torch.Tensor, l):
+        '''computes the feature map of the resnet at a certain layer. at layer 2, computes it starting from the image,
+        at layer 3 and 4, use the last feature map to save some computation time'''
+        if l==0:
+            x = self.base_model.conv1(x) # B x 64 x 112 x 112
+            x = self.base_model.bn1(x)
+            x = self.base_model.relu(x)
+            x = self.base_model.maxpool(x) # B x 64 x 56 x 56
+            x = self.base_model.layer1(x) # B x 256 x 56 x 56
+            feature_map = self.layers[l](x)
+        else:
+            feature_map = self.layers[l](x)
+        return self.get_graph(feature_map, l)
+    
+class AVSL_Similarity(nn.Module):
+
+    def __init__(
+            self,
+            output_channels=[512,1024,2048],
+            num_classes=30,
+            use_proxy=True,
+            emb_dim=128,
+            topk=32,
+            momentum=0.5,
+            p=2,
+        ):
+        super().__init__()
+        self.output_channels = output_channels
+        self.num_classes = num_classes
+        self.use_proxy = use_proxy
+        self.emb_dim = emb_dim
+        self.topk = topk
+        self.momentum = momentum
+        self.p = p
+
+        self.Graph_model = AVSL_Graph(emb_dim)
+        self.init_parameters()
+
+    def init_parameters(self):
+        self.n_layers = len(self.output_channels)
+        self.is_link_initiated = [False] * self.n_layers
+        self.register_buffer("proxy_labels", torch.arange(self.num_classes))
+
+        d = self.emb_dim
+        for l in range(self.n_layers):
+            if self.use_proxy:
+                proxy = nn.Parameter(nn.init.kaiming_normal_(
+                            torch.zeros(self.num_classes, d), 
+                            a=math.sqrt(5)
+                ))
+                setattr(self, f"proxy_{l}", proxy)
+
+            # Linear coefficient for the certainty
+            setattr(self, f"alpha_{l}", nn.Parameter(torch.ones(d)))
+            setattr(self, f"beta_{l}", nn.Parameter(torch.zeros(d)))
+            if l >= 1:
+                setattr(self, f"link_{l-1}to{l}", torch.zeros(d, d))
+
+    def update_link(self, new_link, l):
+        '''Incorporate gradually all training samples links with a momentum factor(=0.5)'''
+        if self.is_link_initiated[l]:
+            old_link_l = getattr(self, f"link_{l-1}to{l}")
+            old_link_l.data = self.momentum * old_link_l.data + (1-self.momentum) * new_link
+        else:
+            setattr(self, f"link_{l-1}to{l}", new_link)
+            self.is_link_initiated[l]=True
+
+    def get_similarity_matrix(self, emb1, cert1, emb2, cert2, l):
+        # Normalize
+        emb1, emb2 = F.normalize(emb1, self.p, dim=-1), F.normalize(emb2, self.p, dim=-1)
+        emb1, emb2 = emb1.unsqueeze(1), emb2.unsqueeze(0) #(B1,R), (B1,R) -> (B1,1,R), (1,B1,R)
+        nodes = torch.abs(emb1-emb2).pow(self.p) # |(1,B,R) - (B,1,R)|^2 -> (B1,B2,R)
+
+        if l==0:
+            self.nodes_hat = nodes
+        else:
+            '''Computing the matrix W hat in the paper containing all the "links" i.e. edges values'''
+            W = getattr(self, f"link_{l-1}to{l}")
+            # keep only k most correlated nodes at layer l-1
+            W *= topk_mask(W, k=3, dim=0) #(R,R)
+            # normalized edges
+            W /= (torch.sum(W, dim=0, keepdim=True) + 1e-8) #(R,R)
+            '''Computing the probability of unreliability matrix (P in the paper). Using the same trick as for the embeddings'''
+            eta = cert1.unsqueeze(1) * cert2.unsqueeze(0) #(B1,R) * (B2,R) -> (B1,1,R) * (1,B2,R) -> (B1,B2,R)
+            P = torch.sigmoid(getattr(self, f"alpha_{l}") * eta + getattr(self, f"beta_{l}")) #(B1,B2,R)
+            '''Rectified similarity nodes (delta hat in the paper)'''
+            self.nodes_hat = (1-P) * (self.nodes_hat @ W) + P * nodes.detach() # (B1,B2,R) * ((B1,B2,R) @ (R,R)) + (B1,B2,R) * (B1,B2,R) -> (B1,B2,R)
+
+        if self.training:
+            # Sum along the R axis to get the similarity metric (called d in the paper) between each sample of B1 and B2
+            return torch.sum(nodes, dim=-1)
+    
+    def forward(self, images1, labels1, images2=None):
+        '''Computes the similarities between batch 1 and batch 2 if batch 2 is given (INFERENCE only), in this case labels1 is not used
+        otherwise computes similarities between batch 1 and itself (TRAINING)'''
+        output_dict = dict()
+        # ========== Training ===========
+        if self.training:
+            fmap1 = images1
+            for l in range(self.n_layers):
+                emb1, cert1, link, fmap1 = self.Graph_model.forward(fmap1, l)
+                emb2 = getattr(self, f"proxy_{l}")
+                cert2 = cert1.mean() * torch.ones_like(emb2)
+                if l>=1:
+                    self.update_link(link, l)
+                output_dict[f"emb_sim_{l}"] = self.get_similarity_matrix(emb1, cert1, emb2, cert2, l)
+            # Overall similarity
+            output_dict["ovr_sim"] = torch.sum(self.nodes_hat, dim=-1)
+            output_dict["row_labels"] = labels1
+            output_dict["col_labels"] = getattr(self, "proxy_labels")
+        # ============== Inference =============
+        else:
+            images2 = images1 if images2 is None else images2
+            fmap1 = images1
+            fmap2 = images2
+            for l in range(self.n_layers):
+                emb1, cert1, _, fmap1 = self.Graph_model(fmap1, l)
+                emb2, cert2, _, fmap2 = self.Graph_model(fmap2, l)
+                self.get_similarity_matrix(emb1, cert1, emb2, cert2, l)
+            output_dict["ovr_sim"] = torch.sum(self.nodes_hat, dim=-1)
+
+        return output_dict
+
+if __name__ == "__main__":
+    device = torch.device("cuda")
+    B, C, H, W = 16,3,256,256
+    n_layers = 3
+    input = torch.randn(size=(B,C,W,H)).to(device)
+    labels = torch.randint(0,30, size=(B,))
+    n_layers, r = 3,128
+    output_channels = [512,1024,2048]
+    model = AVSL_Similarity(num_classes=30).to(device)
+    
+    model.train()
+    output_dict = model(input, labels)
+    for k,v in output_dict.items():
+        print(k, v)
+
+    model.eval()
+    model(input, labels)
