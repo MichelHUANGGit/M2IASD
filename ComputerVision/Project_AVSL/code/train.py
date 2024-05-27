@@ -7,7 +7,7 @@ from tqdm import tqdm
 
 from losses import Proxy_AVSL_Loss
 from models import AVSL
-from model import AVSL_Similarity
+# from model import AVSL_Similarity
 from dataset import CUB_dataset
 
 def train(
@@ -35,26 +35,29 @@ def train(
         print("Epoch %d" %epoch)
         model.train()
         train_loss = 0.
-        for batch in tqdm(train_loader):
+        tqdmloader = tqdm(train_loader, unit="batch")
+        for batch in tqdmloader:
+            tqdmloader.set_description("Train loss: %.5f" %train_loss)
             images, labels = batch["image"].to(device), batch["label"].to(device)
             optimizer.zero_grad()
-            output_dict = model.forward(images, labels)
-            loss = loss_fn.forward(output_dict)
+            output_dict = model(images, labels)
+            loss = loss_fn(output_dict) / len(train_loader)
             loss.backward()
             optimizer.step()
             train_loss += loss.detach().cpu().item()
-        print("Train loss :", train_loss)
+        train_loss /= len(train_loader)
         # ========================== Validation ===========================
         # Validation on the Proxy Anchor Loss (hence no model.eval())
         with torch.no_grad():
             val_loss = 0.
-            for batch in tqdm(valid_loader):
+            tqdmloader = tqdm(valid_loader, unit="batch")
+            for batch in tqdmloader:
+                tqdmloader.set_description("Val loss: %.5f" %val_loss)
                 images, labels = batch["image"].to(device), batch["label"].to(device)
-                output_dict = model.forward(images, labels)
-                loss = loss_fn.forward(output_dict)
+                output_dict = model(images, labels)
+                loss = loss_fn(output_dict) / len(valid_loader)
                 val_loss += loss.detach().cpu().item()
-        # This is the anchor loss
-        print("Validation loss :", val_loss)
+        print("Train loss : %0.5f - Validation loss : %0.5f" %(train_loss,val_loss))
 
 if __name__ == "__main__":
     train_args = {
@@ -98,13 +101,7 @@ if __name__ == "__main__":
     train(model, train_dataset, val_dataset, **train_args)
     torch.save(
         model, 
-        f"AVSL\
-        -emb{model_args["emb_dim"]}\
-        -batch{train_args["batch_size"]}\
-        -lr{train_args["lr"]}\
-        -layers{model_args["n_layers"]}\
-        -topk{model_args["topk"]}\
-        -m{model_args["momentum"]}.pt"
+        f"AVSL-emb{model_args["emb_dim"]}-batch{train_args["batch_size"]}-lr{train_args["lr"]}-layers{model_args["n_layers"]}-topk{model_args["topk"]}-m{model_args["momentum"]}.pt"
     )
 
 

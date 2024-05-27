@@ -45,7 +45,7 @@ class ProxyAnchorLoss(nn.Module):
         # print("pos loss", pos_loss)
         # print("neg loss", neg_loss)
         return pos_loss + neg_loss
-    
+
 class Proxy_AVSL_Loss(nn.Module):
     def __init__(self, n_layers, CNN_a, CNN_b, sim_a, sim_b, *args, **kwargs) -> None:
         super().__init__(*args, **kwargs)
@@ -57,10 +57,10 @@ class Proxy_AVSL_Loss(nn.Module):
         row_labels, col_labels = collector_output["row_labels"], collector_output["col_labels"]
         # number of similarities in the matrix (batch size1 * num_proxies)
         B = collector_output["ovr_sim"].size(0) * collector_output["ovr_sim"].size(1)
-        total_loss = self.similarity_loss.forward(collector_output["ovr_sim"], row_labels, col_labels) / B
+        total_loss = self.similarity_loss(collector_output["ovr_sim"], row_labels, col_labels) / B
         for l in range(self.n_layers):
             B = collector_output[f"emb_sim_{l}"].size(0) * collector_output[f"emb_sim_{l}"].size(1)
-            total_loss += self.base_loss.forward(collector_output[f"emb_sim_{l}"], row_labels, col_labels) / B
+            total_loss += self.base_loss(collector_output[f"emb_sim_{l}"], row_labels, col_labels) / B
         return total_loss
 
 

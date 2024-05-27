@@ -5,6 +5,7 @@ from dataset import CUB_dataset, CUB_dataset_Test
 from model import AVSL_Similarity
 from train import train
 from inference import validate, infer_queries, get_predictions
+import argparse
 
 
 def main(
@@ -35,13 +36,12 @@ def main(
     # ==================== Datasets ====================
     train_transform = transforms.Compose([
         transforms.Resize((224, 224)),
-        transforms.RandomCrop((224, 224)),
+        # transforms.RandomCrop((224, 224)),
         transforms.RandomHorizontalFlip(0.5),
-        # transforms.GaussianBlur(),
         transforms.ToTensor(),
         transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])])
     transform = transforms.Compose([
-        transforms.Resize((256, 256)),
+        transforms.Resize((224, 224)),
         transforms.ToTensor(),
         transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])]) 
     train_dataset = CUB_dataset(
@@ -91,29 +91,34 @@ def main(
 
 
 if __name__ == "__main__":
-    args = {
-        "epochs":25,
-        "batch_size_training":100,
-        "batch_size_inference":30,
-        "lr":1e-4,
-        "output_channels":[512,1024,2048],
-        "n_layers":3,
-        "emb_dim":256,
-        "num_classes":30,
-        "use_proxy":True,
-        "device":torch.device("cuda"),
-        "topk":64,
-        "momentum":0.5,
-        "p":2,
-        "CNN_coeffs":(32,0.1),
-        "sim_coeffs":(32,0.1),
-        "validate_on_train":False,
-        "validate_on_val":True,
-        "infer_gallery_to_queries":False,
-        "pretrained":True,
-        "train_model":False,
-        "model_path":"AVSL-emb256-batch100-lr0.0001-layers3-topk64-m0.5.pt",
-        "name":"AVSL_v2",
-        "metrics_K":[1,2,4,8],
-    }
-    main(**args)
+    parser = argparse.ArgumentParser(description="Parse training parameters")
+
+    parser.add_argument("--epochs", type=int, default=25)
+    parser.add_argument("--batch_size_training", type=int, default=100)
+    parser.add_argument("--batch_size_inference", type=int, default=30)
+    parser.add_argument("--lr", type=float, default=1e-4)
+    parser.add_argument("--output_channels", type=int, nargs='+', default=[512, 1024, 2048], help="Output channels for each layer")
+    parser.add_argument("--n_layers", type=int, default=3)
+    parser.add_argument("--emb_dim", type=int, default=512)
+    parser.add_argument("--num_classes", type=int, default=30)
+    parser.add_argument("--use_proxy", action="store_true")
+    parser.add_argument("--device", type=str, default="cuda")
+    parser.add_argument("--topk", type=int, default=128, help="topk value AVSL")
+    parser.add_argument("--momentum", type=float, default=0.5)
+    parser.add_argument("--p", type=int, default=2, help="norm degree for embedding distance")
+    parser.add_argument("--CNN_coeffs", type=float, nargs=2, default=(32, 0.1), help="Coefficients for CNN loss")
+    parser.add_argument("--sim_coeffs", type=float, nargs=2, default=(32, 0.1))
+    parser.add_argument("--validate_on_train", action="store_true")
+    parser.add_argument("--validate_on_val", action="store_true")
+    parser.add_argument("--infer_gallery_to_queries", action="store_true")
+    parser.add_argument("--pretrained", action="store_true")
+    parser.add_argument("--train_model", action="store_true", help="Whetheer to train the model")
+    parser.add_argument("--model_path", type=str, default=None, help="if pretrained, takes the pretrained model path")
+    parser.add_argument("--name", type=str, default="AVSL_v3", help="Base name")
+    parser.add_argument("--metrics_K", type=int, nargs='+', default=[1, 2, 4, 8], help="Values of K for recall and precision")
+
+    args = parser.parse_args()
+    args_dict = vars(args)
+    args_dict['device'] = torch.device(args_dict['device'])
+    
+    main(**args_dict)

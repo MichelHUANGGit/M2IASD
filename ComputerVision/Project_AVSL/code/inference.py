@@ -12,7 +12,7 @@ def precision(K, matrix:torch.tensor, labels:torch.tensor):
     topK_closest_labels = torch.zeros_like(topK_closest_images, dtype=torch.int8)
     for i in range(topK_closest_images.size(0)):
         for j in range(topK_closest_images.size(1)):
-            topK_closest_labels[i,j] = labels[topK_closest_labels[i,j]]
+            topK_closest_labels[i,j] = labels[topK_closest_images[i,j]]
     labels_extended = labels.repeat(K,1).T #shape (N,K)
     correctly_retrieved = torch.eq(topK_closest_labels, labels_extended).to(torch.float64) #shape(N,K)
     return correctly_retrieved.mean().item()
@@ -24,7 +24,7 @@ def recall(K, matrix:torch.tensor, labels:torch.tensor):
     topK_closest_labels = torch.zeros_like(topK_closest_images, dtype=torch.int8)
     for i in range(topK_closest_images.size(0)):
         for j in range(topK_closest_images.size(1)):
-            topK_closest_labels[i,j] = labels[topK_closest_labels[i,j]]
+            topK_closest_labels[i,j] = labels[topK_closest_images[i,j]]
     labels_extended = labels.repeat(K,1).T #shape (N,K)
     at_least_one_retrieved = (torch.sum(labels_extended == topK_closest_labels, dim=1) > 0).to(torch.float64) # shape(N) of bools
     return torch.mean(at_least_one_retrieved).item()
@@ -57,7 +57,7 @@ def infer_gallery(
                     row_first, row_last = batch1["id"][0], batch1["id"][-1]+1
                     col_first, col_last = batch2["id"][0], batch2["id"][-1]+1
                     # Compute the similarity
-                    similarity_matrix[row_first:row_last, col_first:col_last] = model.forward(images1, None, images2).get("ovr_sim")
+                    similarity_matrix[row_first:row_last, col_first:col_last] = model(images1, None, images2).get("ovr_sim")
 
     # Only keep the upper triangle, the elements on the diagonal should be 0
     similarity_matrix = torch.triu(similarity_matrix, diagonal=1)
@@ -102,7 +102,7 @@ def infer_queries(
                 row_first, row_last = batch1["id"][0], batch1["id"][-1]+1
                 col_first, col_last = batch2["id"][0], batch2["id"][-1]+1
                 # Compute the similarity
-                similarity_matrix[row_first:row_last, col_first:col_last] = model.forward(images1, None, images2).get("ovr_sim")
+                similarity_matrix[row_first:row_last, col_first:col_last] = model(images1, None, images2).get("ovr_sim")
 
     return similarity_matrix.cpu()
 
