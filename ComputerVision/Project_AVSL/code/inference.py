@@ -3,6 +3,7 @@ from torchvision import transforms
 from tqdm import tqdm
 from dataset import CUB_dataset, CUB_dataset_Test
 from torch.utils.data import DataLoader
+import os
 import pandas
 
 def precision(K, matrix:torch.tensor, labels:torch.tensor):
@@ -66,12 +67,13 @@ def infer_gallery(
 
     return similarity_matrix.cpu()
 
-def validate(model, dataset, batch_size, device, metrics_K, save_matrix=False, name="train"):
+def validate(model, dataset, batch_size, device, metrics_K, save_matrix=False, name="train", save_dir=None):
     print(f"Measuring Recall @ K on {name} dataset")
     labels = torch.tensor(dataset.labels, dtype=torch.int8)
     similarities = infer_gallery(model, dataset, batch_size, device)
     if save_matrix:
-        torch.save(similarities, f"{name}_similarities.pt")
+        save_path = os.path.join(save_dir, f"{name}_similarities.pt")
+        torch.save(similarities, save_path)
         print(f"Saved {name} similarity matrix!")
     for metric_K in metrics_K:
         print("Precision @ %d"%metric_K, precision(metric_K, similarities, labels))
@@ -106,7 +108,7 @@ def infer_queries(
 
     return similarity_matrix.cpu()
 
-def get_predictions(similarity_matrix, gallery_labels, K, test_paths):
+def get_predictions(similarity_matrix, gallery_labels, K, test_paths, save_dir):
     topk_closest_images = torch.topk(similarity_matrix, K, dim=0, largest=False).indices
     topk_closest_labels = torch.zeros_like(topk_closest_images)
     for i in range(topk_closest_images.size(0)):
@@ -119,7 +121,8 @@ def get_predictions(similarity_matrix, gallery_labels, K, test_paths):
 
     submissions = pandas.DataFrame(submissions, index=None)
     submissions.rename(columns={0:"ID",1:"Category"}, inplace=True)
-    submissions.to_csv("submissions@%d.csv"%K, sep=",", index=False)
+    save_path = os.path.join(save_dir, "submissions@%d.csv"%K)
+    submissions.to_csv(save_path, sep=",", index=False)
     
 
 

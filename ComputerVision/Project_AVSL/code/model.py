@@ -1,24 +1,24 @@
 import torch
 import torch.nn as nn
 from torch.nn import functional as F
-from torchvision.models import resnet50, ResNet50_Weights, EfficientNet_V2_S_Weights, efficientnet_v2_s
+from base_models import ResNet50_, EfficientNet_v2_S_
 from utils import topk_mask
 import math
 
+
 class AVSL_Graph(nn.Module):
 
-    def __init__(self, emb_dim, base_model_name="ResNet50"):
+    def __init__(self, emb_dim, base_model_name="ResNet50", lay_to_emb_ids=[2,3,4]):
         super().__init__()
+        self.base_model_name = base_model_name
         if base_model_name == "ResNet50":
-            self.base_model = resnet50(weights=ResNet50_Weights.IMAGENET1K_V2)
-            self.layers = [self.base_model.layer2, self.base_model.layer3, self.base_model.layer4]
-            self.n_layers = len(self.layers)
-            self.output_channels = [self.layers[i].get_submodule("0.conv3").out_channels for i in range(self.n_layers)] # [512, 1024, 2048]
+            self.base_model = ResNet50_(lay_to_emb_ids)
         elif base_model_name == "EfficientNet_V2_S":
-            self.base_model = efficientnet_v2_s(EfficientNet_V2_S_Weights.IMAGENET1K_V1)
-            self.layers = [self.base_model]
-            self.n_layers = len(self.layers)
-            self.output_channels = [self.layers[i].get_submodule("0").out_channels for i in range(self.n_layers)]
+            self.base_model = EfficientNet_v2_S_(lay_to_emb_ids)
+
+        self.lay_to_emb_ids = lay_to_emb_ids
+        self.n_layers = len(lay_to_emb_ids)
+        self.output_channels = [self.base_model.layers_output_channels[i] for i in lay_to_emb_ids]
         self.emb_dim = emb_dim
         self.initiate_params()
 
@@ -40,11 +40,6 @@ class AVSL_Graph(nn.Module):
             setattr(self, "conv1x1_{}".format(l), conv)
     
     def get_embedding(self, feature_map:torch.Tensor, l) -> torch.Tensor:
-        # We take a feature map (B,C,H,W) -> pool -> (B,C,1,1) -> squeeze + linear proj -> (B,r)
-        # return (getattr(self, f"lin_proj_{l}")(
-        #             getattr(self, f"pool_{l}")(feature_map).squeeze((-2,-1))
-        # ))
-        # pooling
         ap_feat = self.adavgpool(feature_map)
         mp_feat = self.admaxpool(feature_map)
         output = ap_feat + mp_feat
@@ -111,24 +106,15 @@ class AVSL_Graph(nn.Module):
         return embedding, certainty, link, feature_map
     
     def forward(self, x:torch.Tensor, l):
-        '''computes the feature map of the resnet at a certain layer. at layer 2, computes it starting from the image,
-        at layer 3 and 4, use the last feature map to save some computation time'''
-        if l==0:
-            x = self.base_model.conv1(x) # B x 64 x 112 x 112
-            x = self.base_model.bn1(x)
-            x = self.base_model.relu(x)
-            x = self.base_model.maxpool(x) # B x 64 x 56 x 56
-            x = self.base_model.layer1(x) # B x 256 x 56 x 56
-            feature_map = self.layers[l](x)
-        else:
-            feature_map = self.layers[l](x)
+        feature_map = self.base_model(x, l)
         return self.get_graph(feature_map, l)
     
 class AVSL_Similarity(nn.Module):
 
     def __init__(
             self,
-            output_channels=[512,1024,2048],
+            base_model_name="ResNet50",
+            lay_to_emb_ids=[2,3,4],
             num_classes=30,
             use_proxy=True,
             emb_dim=128,
@@ -137,7 +123,8 @@ class AVSL_Similarity(nn.Module):
             p=2,
         ):
         super().__init__()
-        self.output_channels = output_channels
+        self.base_model_name = base_model_name
+        self.lay_to_emb_ids = lay_to_emb_ids
         self.num_classes = num_classes
         self.use_proxy = use_proxy
         self.emb_dim = emb_dim
@@ -145,11 +132,11 @@ class AVSL_Similarity(nn.Module):
         self.momentum = momentum
         self.p = p
 
-        self.Graph_model = AVSL_Graph(emb_dim)
+        self.Graph_model = AVSL_Graph(emb_dim, base_model_name, lay_to_emb_ids)
         self.init_parameters()
 
     def init_parameters(self):
-        self.n_layers = len(self.output_channels)
+        self.n_layers = len(self.lay_to_emb_ids)
         self.is_link_initiated = [False] * self.n_layers
         self.register_buffer("proxy_labels", torch.arange(self.num_classes))
 
@@ -187,7 +174,7 @@ class AVSL_Similarity(nn.Module):
             self.nodes_hat = nodes
         else:
             '''Computing the matrix W hat in the paper containing all the "links" i.e. edges values'''
-            W = torch.relu(getattr(self, f"link_{l-1}to{l}"))
+            W = getattr(self, f"link_{l-1}to{l}")
             # keep only k most correlated nodes at layer l-1
             W *= topk_mask(W, k=3, dim=0) #(R,R)
             # normalized edges
@@ -247,14 +234,18 @@ if __name__ == "__main__":
     n_layers = 3
     input = torch.randn(size=(B,C,W,H)).to(device)
     labels = torch.randint(0,30, size=(B,))
-    n_layers, r = 3,128
-    output_channels = [512,1024,2048]
-    model = AVSL_Similarity(num_classes=30).to(device)
+    n_layers, emb_dim = 7, 128
+    lay_to_emb_ids = [1, 2, 3, 4, 5, 6, 7]
+
+    model = AVSL_Similarity(
+        base_model_name="EfficientNet_V2_S", 
+        lay_to_emb_ids=lay_to_emb_ids,
+    ).to(device)
     
     model.train()
     output_dict = model(input, labels)
     for k,v in output_dict.items():
-        print(k, v)
+        print(k, v.shape)
 
     model.eval()
     model(input, labels)

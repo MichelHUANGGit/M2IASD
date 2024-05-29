@@ -6,11 +6,12 @@ from model import AVSL_Similarity
 from train import train
 from inference import validate, infer_queries, get_predictions
 import argparse
+import os
 
 
 def main(
-        output_channels,
-        n_layers,
+        base_model_name,
+        lay_to_emb_ids,
         emb_dim, 
         num_classes, 
         use_proxy, 
@@ -60,34 +61,32 @@ def main(
         return_id=True,
         gallery_length=0)
     
+    n_layers = len(lay_to_emb_ids)
+    model_name = f"emb{emb_dim}-batch{batch_size_training}-lr{lr}-layers{n_layers}-topk{topk}-m{momentum}.pt"
+    save_dir = os.path.join("runs", name)
+    if not(os.path.exists(save_dir)):
+        os.mkdir(save_dir)
 
     if pretrained:
         print("Loading pretrained model")
         model = torch.load(model_path, device)
     else:
-        model = AVSL_Similarity(output_channels, num_classes, use_proxy, emb_dim, topk, momentum, p).to(device)
+        model = AVSL_Similarity(base_model_name, lay_to_emb_ids, num_classes, use_proxy, emb_dim, topk, momentum, p).to(device)
     if train_model:
-        print("Start Training")
-        train(model, train_dataset, val_dataset, n_layers, epochs, lr, batch_size_training, device, CNN_coeffs, sim_coeffs)
-        print("Saving...")
-        torch.save(
-            model, 
-            f"{name}-emb{emb_dim}-batch{batch_size_training}-lr{lr}-layers{n_layers}-topk{topk}-m{momentum}.pt"
-        )
+        train(model, train_dataset, val_dataset, n_layers, epochs, lr, batch_size_training, device, CNN_coeffs, sim_coeffs, save_dir, model_name)
     
     # =================== Measuring performance ======================
-    # TO FIX
     if validate_on_train:
-        validate(model, train_dataset, batch_size_inference, device, metrics_K, save_matrix=False, name="train")
+        validate(model, train_dataset, batch_size_inference, device, metrics_K, save_matrix=False, name="train", save_dir=save_dir)
     if validate_on_val:
-        validate(model, val_dataset, batch_size_inference, device, metrics_K, save_matrix=True, name="val")
+        validate(model, val_dataset, batch_size_inference, device, metrics_K, save_matrix=True, name="val", save_dir=save_dir)
 
     # ========================= Infering on test set =========================
     if infer_gallery_to_queries:
         gallery_to_query_similarities = infer_queries(model, train_dataset, batch_size_inference, query_dataset, device)
-        torch.save(gallery_to_query_similarities, "glry_to_query_sim.pt")
+        torch.save(gallery_to_query_similarities, os.path.join(save_dir,"glry_to_query_sim.pt"))
         for metric_K in metrics_K:
-            get_predictions(gallery_to_query_similarities, train_dataset.labels, metric_K, query_dataset.image_paths)
+            get_predictions(gallery_to_query_similarities, train_dataset.labels, metric_K, query_dataset.image_paths, save_dir=save_dir)
 
 
 if __name__ == "__main__":
@@ -97,8 +96,8 @@ if __name__ == "__main__":
     parser.add_argument("--batch_size_training", type=int, default=100)
     parser.add_argument("--batch_size_inference", type=int, default=30)
     parser.add_argument("--lr", type=float, default=1e-4)
-    parser.add_argument("--output_channels", type=int, nargs='+', default=[512, 1024, 2048], help="Output channels for each layer")
-    parser.add_argument("--n_layers", type=int, default=3)
+    parser.add_argument("--base_model_name", type=str, default="ResNet50", help="Either ResNet50 or EfficientNet_V2_S")
+    parser.add_argument("--lay_to_emb_ids", type=int, nargs='+', default=[2,3,4], help="the base model's layers to project to an embedding space")
     parser.add_argument("--emb_dim", type=int, default=512)
     parser.add_argument("--num_classes", type=int, default=30)
     parser.add_argument("--use_proxy", action="store_true")
@@ -114,7 +113,7 @@ if __name__ == "__main__":
     parser.add_argument("--pretrained", action="store_true")
     parser.add_argument("--train_model", action="store_true", help="Whetheer to train the model")
     parser.add_argument("--model_path", type=str, default=None, help="if pretrained, takes the pretrained model path")
-    parser.add_argument("--name", type=str, default="AVSL_v3", help="Base name")
+    parser.add_argument("--name", type=str, default="AVSL_v3", help="General name of the model, should not be too long, i.e. AVSL_resnet50")
     parser.add_argument("--metrics_K", type=int, nargs='+', default=[1, 2, 4, 8], help="Values of K for recall and precision")
 
     args = parser.parse_args()

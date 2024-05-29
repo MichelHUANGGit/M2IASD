@@ -56,11 +56,11 @@ class Proxy_AVSL_Loss(nn.Module):
     def forward(self, collector_output:dict):
         row_labels, col_labels = collector_output["row_labels"], collector_output["col_labels"]
         # number of similarities in the matrix (batch size1 * num_proxies)
-        B = collector_output["ovr_sim"].size(0) * collector_output["ovr_sim"].size(1)
-        total_loss = self.similarity_loss(collector_output["ovr_sim"], row_labels, col_labels) / B
+        # B = collector_output["ovr_sim"].size(0) * collector_output["ovr_sim"].size(1)
+        total_loss = self.similarity_loss(collector_output["ovr_sim"], row_labels, col_labels)
         for l in range(self.n_layers):
-            B = collector_output[f"emb_sim_{l}"].size(0) * collector_output[f"emb_sim_{l}"].size(1)
-            total_loss += self.base_loss(collector_output[f"emb_sim_{l}"], row_labels, col_labels) / B
+            # B = collector_output[f"emb_sim_{l}"].size(0) * collector_output[f"emb_sim_{l}"].size(1)
+            total_loss += self.base_loss(collector_output[f"emb_sim_{l}"], row_labels, col_labels)
         return total_loss
 
 
