@@ -31,18 +31,19 @@ def train(
     valid_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=True, pin_memory=True)
     loss_fn = Proxy_AVSL_Loss(n_layers, *CNN_coeffs, *sim_coeffs)
     optimizer = torch.optim.Adam(model.parameters(), lr)
+    losses = {"train":[],"val":[]}
     
     print("Start Training")
+    # FIX LOSS IN PROGRESS BAR
+    # FIX SAVING TO CSV, ONLY ONE VALUE
     for epoch in range(1, epochs+1):
         # ========================== Training ===========================
         # Train the linear projection of the graph model
         print("Epoch %d" %epoch)
         model.train()
-        losses = {"train":[],"val":[]}
         train_loss = 0.
         tqdmloader = tqdm(train_loader, unit="batch")
         for i, batch in enumerate(tqdmloader):
-            tqdmloader.set_description("Train loss: %.5f" %train_loss)
             images, labels = batch["image"].to(device), batch["label"].to(device)
             optimizer.zero_grad()
             output_dict = model(images, labels)
@@ -50,6 +51,7 @@ def train(
             loss.backward()
             optimizer.step()
             train_loss = (train_loss * i * batch_size + loss.detach().cpu().item())/ ((i+1) * batch_size)
+            tqdmloader.set_description("Train loss: %.5f" %train_loss)
         losses["train"].append(train_loss)
         # ========================== Validation ===========================
         # Validation on the Proxy Anchor Loss (hence no model.eval())
@@ -57,21 +59,22 @@ def train(
             val_loss = 0.
             tqdmloader = tqdm(valid_loader, unit="batch")
             for i, batch in enumerate(tqdmloader):
-                tqdmloader.set_description("Val loss: %.5f" %val_loss)
                 images, labels = batch["image"].to(device), batch["label"].to(device)
                 output_dict = model(images, labels)
                 loss = loss_fn(output_dict)
                 val_loss = (val_loss * i * batch_size + loss.detach().cpu().item())/ ((i+1) * batch_size)
+                tqdmloader.set_description("Val loss: %.5f" %val_loss)
         losses["val"].append(val_loss)
-        print("Train loss : %0.5f - Validation loss : %0.5f" %(train_loss,val_loss))
-    print("Saving...")
+        # print("Train loss : %0.5f - Validation loss : %0.5f" %(train_loss,val_loss))
+    print("Saving model and losses...")
     torch.save(model, os.path.join(save_dir, model_name))
+    df = pandas.DataFrame(losses)
+    df.to_csv(os.path.join(save_dir, "losses.csv"), sep=";", index=False)
     print("Saved!")
-    pandas.DataFrame(losses).to_csv(os.path.join(save_dir, "losses.csv"), sep=";")
 
 if __name__ == "__main__":
     train_args = {
-        "epochs":1,
+        "epochs":2,
         "n_layers":3,
         "lr":1e-4,
         "batch_size":30,

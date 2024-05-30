@@ -1,13 +1,13 @@
 import torch
 from torchvision import transforms
 from dataset import CUB_dataset, CUB_dataset_Test
-# from models import AVSL
 from model import AVSL_Similarity
+import albumentations as A
+from albumentations.pytorch import ToTensorV2
 from train import train
 from inference import validate, infer_queries, get_predictions
 import argparse
 import os
-
 
 def main(
         base_model_name,
@@ -35,16 +35,30 @@ def main(
         train_model=False,
     ) -> None:
     # ==================== Datasets ====================
-    train_transform = transforms.Compose([
-        transforms.Resize((224, 224)),
-        # transforms.RandomCrop((224, 224)),
-        transforms.RandomHorizontalFlip(0.5),
-        transforms.ToTensor(),
-        transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])])
-    transform = transforms.Compose([
-        transforms.Resize((224, 224)),
-        transforms.ToTensor(),
-        transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])]) 
+    # train_transform = transforms.Compose([
+    #     transforms.Resize((224, 224)),
+    #     # transforms.RandomCrop((224, 224)),
+    #     transforms.RandomHorizontalFlip(0.5),
+    #     transforms.ToTensor(),
+    #     transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])])
+    # transform = transforms.Compose([
+    #     transforms.Resize((224, 224)),
+    #     transforms.ToTensor(),
+    #     transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])]) 
+    train_transform = A.Compose([
+        A.Resize((224,224)),
+        A.HorizontalFlip(p=0.5),
+        A.RandomBrightnessContrast(brightness_limit=0.2, contrast_limit=0.2, p=1.0),
+        A.HueSaturationValue(hue_shift_limit=20, sat_shift_limit=30, val_shift_limit=20, p=1.0),
+        A.ShiftScaleRotate(shift_limit=0.1, scale_limit=0.1, rotate_limit=15, p=0.5),
+        A.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
+        ToTensorV2(),
+    ])
+    transform = A.Compose([
+        A.Resize((224,224)),
+        A.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
+        ToTensorV2(),
+    ])
     train_dataset = CUB_dataset(
         root_dir='data/train_images',
         class_index_file='data/class_indexes.csv',
@@ -64,8 +78,10 @@ def main(
     n_layers = len(lay_to_emb_ids)
     model_name = f"emb{emb_dim}-batch{batch_size_training}-lr{lr}-layers{n_layers}-topk{topk}-m{momentum}.pt"
     save_dir = os.path.join("runs", name)
-    if not(os.path.exists(save_dir)):
-        os.mkdir(save_dir)
+    if not(os.path.exists("runs")):
+        os.mkdir("runs")
+        if not(os.path.exists(save_dir)):
+            os.mkdir(save_dir)
 
     if pretrained:
         print("Loading pretrained model")
@@ -77,7 +93,7 @@ def main(
     
     # =================== Measuring performance ======================
     if validate_on_train:
-        validate(model, train_dataset, batch_size_inference, device, metrics_K, save_matrix=False, name="train", save_dir=save_dir)
+        validate(model, train_dataset, batch_size_inference, device, metrics_K, save_matrix=True, name="train", save_dir=save_dir)
     if validate_on_val:
         validate(model, val_dataset, batch_size_inference, device, metrics_K, save_matrix=True, name="val", save_dir=save_dir)
 

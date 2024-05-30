@@ -23,7 +23,7 @@ class ResNet50_(nn.Module):
 
     def forward(self, x, l):
         '''computes the feature map of the base_model at a certain layer. At the first layer, computes it starting from the image/
-        At layer 2, use the feature map of layer1 to save some computation time. And so and so on ...'''
+        At layer 2, use the feature map of layer1 to save some computation time. And so on and so on ...'''
         if l==0:
             for layer in self.pre_layers:
                 x = layer(x)
