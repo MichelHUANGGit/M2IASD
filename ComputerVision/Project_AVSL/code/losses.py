@@ -62,6 +62,45 @@ class Proxy_AVSL_Loss(nn.Module):
             # B = collector_output[f"emb_sim_{l}"].size(0) * collector_output[f"emb_sim_{l}"].size(1)
             total_loss += self.base_loss(collector_output[f"emb_sim_{l}"], row_labels, col_labels)
         return total_loss
+    
+class ContrastiveLoss(nn.Module):
+
+    def __init__(self, margin, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.margin = margin
+
+
+    def forward(self, similarity_matrix: torch.Tensor, labels: torch.Tensor):
+        batch_size = similarity_matrix.size(0)
+        
+        # Create a mask to identify positive and negative pairs
+        labels = labels.unsqueeze(1)  # Shape: (batch_size, 1)
+        pos_mask = labels == labels.T  # Shape: (batch_size, batch_size)
+        neg_mask = ~pos_mask
+        
+        # Calculate the positive loss (similarity should be minimized)
+        pos_loss = torch.sum(similarity_matrix[pos_mask])
+        
+        # Calculate the negative loss (similarity should be maximized with a margin)
+        neg_loss = torch.sum(F.relu(self.margin - similarity_matrix[neg_mask]))
+        total_loss = (pos_loss + neg_loss) / batch_size
+        return total_loss
+
+class AVSL_ContrastiveLoss(nn.Module):
+    def __init__(self, n_layers, margin, *args, **kwargs) -> None:
+        super().__init__(*args, **kwargs)
+        self.n_layers = n_layers
+        self.loss_fn = ContrastiveLoss(margin)
+
+    def forward(self, collector_output):
+        labels = collector_output["labels"]
+        # number of similarities in the matrix (batch size1 * num_proxies)
+        # B = collector_output["ovr_sim"].size(0) * collector_output["ovr_sim"].size(1)
+        total_loss = self.loss_fn(collector_output["ovr_sim"], labels)
+        for l in range(self.n_layers):
+            # B = collector_output[f"emb_sim_{l}"].size(0) * collector_output[f"emb_sim_{l}"].size(1)
+            total_loss += self.loss_fn(collector_output[f"emb_sim_{l}"], labels)
+        return total_loss
 
 
 if __name__ == "__main__":

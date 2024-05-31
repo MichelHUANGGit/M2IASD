@@ -72,8 +72,8 @@ class AVSL_Graph(nn.Module):
 
     def get_certainty(self, CAM:torch.Tensor):
         # print("CAM shape before flattening :",CAM.shape)
-        # return CAM.flatten(2)
-        return CAM.flatten(2).std(dim=-1)
+        return CAM.flatten(2)
+        # return CAM.flatten(2).std(dim=-1)
 
     def get_link(self, low_CAM: torch.Tensor, high_CAM: torch.Tensor) -> torch.Tensor:
         '''corresponds to omega hat i.e. the edge values, returns a torch.Tensor of shape (emb_dim,emb_dim)'''
@@ -153,7 +153,7 @@ class AVSL_Similarity(nn.Module):
             setattr(self, f"alpha_{l}", nn.Parameter(torch.ones(d)))
             setattr(self, f"beta_{l}", nn.Parameter(torch.zeros(d)))
             if l >= 1:
-                setattr(self, f"link_{l-1}to{l}", torch.zeros(d, d))
+                setattr(self, f"link_{l-1}to{l}", torch.zeros(d, d).cuda())
 
     def update_link(self, new_link, l):
         '''Incorporate gradually all training samples links with a momentum factor(=0.5)'''
@@ -180,17 +180,13 @@ class AVSL_Similarity(nn.Module):
             # normalized edges
             W /= (torch.sum(W, dim=0, keepdim=True) + 1e-8) #(R,R)
             '''Computing the probability of unreliability matrix (P in the paper). Using the same trick as for the embeddings'''
-            # print("cert1,2", cert1.shape, cert2.shape)
-            # eta = torch.bmm(
-            #     cert1.transpose(0,1), 
-            #     cert2.transpose(0,1).transpose(1,2)
-            #     ).transpose(0,2) #(B1,R,HW) and (B2,R,HW) -> (R,B1,HW) @ (R,HW,B2) -> (R,B1,B2) -> (B1,B2,R)
-            # print("eta",eta.shape)
-            eta = cert1.unsqueeze(1) * cert2.unsqueeze(0) #(B1,R) * (B2,R) -> (B1,1,R) * (1,B2,R) -> (B1,B2,R)
+            eta = torch.bmm(
+                cert1.transpose(0,1), 
+                cert2.transpose(0,1).transpose(1,2)
+                ).transpose(0,2) #(B1,R,HW) and (B2,R,HW) -> (R,B1,HW) @ (R,HW,B2) -> (R,B1,B2) -> (B1,B2,R)
+            # eta = cert1.unsqueeze(1) * cert2.unsqueeze(0) #(B1,R) * (B2,R) -> (B1,1,R) * (1,B2,R) -> (B1,B2,R)
             P = torch.sigmoid(getattr(self, f"alpha_{l}") * eta + getattr(self, f"beta_{l}")) #(B1,B2,R)
-            # print("P", P.shape)
             '''Rectified similarity nodes (delta hat in the paper)'''
-            # print((self.nodes_hat @ W).shape)
             self.nodes_hat = (1-P) * (self.nodes_hat @ W) + P * nodes.detach() # (B1,B2,R) * ((B1,B2,R) @ (R,R)) + (B1,B2,R) * (B1,B2,R) -> (B1,B2,R)
 
         if self.training:
@@ -202,19 +198,32 @@ class AVSL_Similarity(nn.Module):
         otherwise computes similarities between batch 1 and itself (TRAINING)'''
         output_dict = dict()
         # ========== Training ===========
-        if self.training:
+        if self.training and self.use_proxy:
             fmap1 = images1
             for l in range(self.n_layers):
                 emb1, cert1, link, fmap1 = self.Graph_model(fmap1, l)
                 emb2 = getattr(self, f"proxy_{l}")
-                cert2 = cert1.mean() * torch.ones_like(emb2)
                 if l>=1:
                     self.update_link(link, l)
+                    # cert2 = cert1.mean() * torch.ones_like(emb2)
+                    cert2 = emb2.mean() * torch.ones_like(cert1)
+                else:
+                    cert2 = None
                 output_dict[f"emb_sim_{l}"] = self.get_similarity_matrix(emb1, cert1, emb2, cert2, l)
             # Overall similarity
             output_dict["ovr_sim"] = torch.sum(self.nodes_hat, dim=-1)
             output_dict["row_labels"] = labels1
             output_dict["col_labels"] = getattr(self, "proxy_labels")
+        elif self.training and not(self.use_proxy):
+            fmap1 = images1
+            for l in range(self.n_layers):
+                emb1, cert1, link, fmap1 = self.Graph_model(fmap1, l)
+                emb2 = emb1
+                cert2 = cert1
+                output_dict[f"emb_sim_{l}"] = self.get_similarity_matrix(emb1, cert1, emb2, cert2, l)
+            # Overall similarity
+            output_dict["ovr_sim"] = torch.sum(self.nodes_hat, dim=-1)
+            output_dict["labels"] = labels1
         # ============== Inference =============
         else:
             images2 = images1 if images2 is None else images2
@@ -234,12 +243,15 @@ if __name__ == "__main__":
     n_layers = 3
     input = torch.randn(size=(B,C,W,H)).to(device)
     labels = torch.randint(0,30, size=(B,))
-    n_layers, emb_dim = 7, 128
-    lay_to_emb_ids = [1, 2, 3, 4, 5, 6, 7]
+    # n_layers, emb_dim = 7, 128
+    # lay_to_emb_ids = [1, 2, 3, 4, 5, 6, 7]
+    n_layers, emb_dim = 3, 64
+    lay_to_emb_ids = [2,3,4]
 
     model = AVSL_Similarity(
-        base_model_name="EfficientNet_V2_S", 
+        base_model_name="ResNet50", 
         lay_to_emb_ids=lay_to_emb_ids,
+        use_proxy=False
     ).to(device)
     
     model.train()

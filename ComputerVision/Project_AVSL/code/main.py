@@ -25,6 +25,7 @@ def main(
         device, 
         CNN_coeffs, 
         sim_coeffs,
+        margin,
         metrics_K,
         model_path,
         name,
@@ -35,30 +36,30 @@ def main(
         train_model=False,
     ) -> None:
     # ==================== Datasets ====================
-    # train_transform = transforms.Compose([
-    #     transforms.Resize((224, 224)),
-    #     # transforms.RandomCrop((224, 224)),
-    #     transforms.RandomHorizontalFlip(0.5),
-    #     transforms.ToTensor(),
-    #     transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])])
-    # transform = transforms.Compose([
-    #     transforms.Resize((224, 224)),
-    #     transforms.ToTensor(),
-    #     transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])]) 
-    train_transform = A.Compose([
-        A.Resize((224,224)),
-        A.HorizontalFlip(p=0.5),
-        A.RandomBrightnessContrast(brightness_limit=0.2, contrast_limit=0.2, p=1.0),
-        A.HueSaturationValue(hue_shift_limit=20, sat_shift_limit=30, val_shift_limit=20, p=1.0),
-        A.ShiftScaleRotate(shift_limit=0.1, scale_limit=0.1, rotate_limit=15, p=0.5),
-        A.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
-        ToTensorV2(),
-    ])
-    transform = A.Compose([
-        A.Resize((224,224)),
-        A.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
-        ToTensorV2(),
-    ])
+    train_transform = transforms.Compose([
+        transforms.Resize((224, 224)),
+        # transforms.RandomCrop((224, 224)),
+        transforms.RandomHorizontalFlip(0.5),
+        transforms.ToTensor(),
+        transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])])
+    transform = transforms.Compose([
+        transforms.Resize((224, 224)),
+        transforms.ToTensor(),
+        transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])]) 
+    # train_transform = A.Compose([
+    #     A.Resize((224,224)),
+    #     A.HorizontalFlip(p=0.5),
+    #     A.RandomBrightnessContrast(brightness_limit=0.2, contrast_limit=0.2, p=1.0),
+    #     A.HueSaturationValue(hue_shift_limit=20, sat_shift_limit=30, val_shift_limit=20, p=1.0),
+    #     A.ShiftScaleRotate(shift_limit=0.1, scale_limit=0.1, rotate_limit=15, p=0.5),
+    #     A.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
+    #     ToTensorV2(),
+    # ])
+    # transform = A.Compose([
+    #     A.Resize((224,224)),
+    #     A.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
+    #     ToTensorV2(),
+    # ])
     train_dataset = CUB_dataset(
         root_dir='data/train_images',
         class_index_file='data/class_indexes.csv',
@@ -89,7 +90,7 @@ def main(
     else:
         model = AVSL_Similarity(base_model_name, lay_to_emb_ids, num_classes, use_proxy, emb_dim, topk, momentum, p).to(device)
     if train_model:
-        train(model, train_dataset, val_dataset, n_layers, epochs, lr, batch_size_training, device, CNN_coeffs, sim_coeffs, save_dir, model_name)
+        train(model, train_dataset, val_dataset, n_layers, epochs, lr, batch_size_training, device, CNN_coeffs, sim_coeffs, margin, save_dir, model_name)
     
     # =================== Measuring performance ======================
     if validate_on_train:
@@ -123,6 +124,7 @@ if __name__ == "__main__":
     parser.add_argument("--p", type=int, default=2, help="norm degree for embedding distance")
     parser.add_argument("--CNN_coeffs", type=float, nargs=2, default=(32, 0.1), help="Coefficients for CNN loss")
     parser.add_argument("--sim_coeffs", type=float, nargs=2, default=(32, 0.1))
+    parser.add_argument("--margin", type=float, default=1.0, help="contrastive loss margin")
     parser.add_argument("--validate_on_train", action="store_true")
     parser.add_argument("--validate_on_val", action="store_true")
     parser.add_argument("--infer_gallery_to_queries", action="store_true")

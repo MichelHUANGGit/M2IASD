@@ -5,7 +5,7 @@ from torchvision import transforms
 from torch.utils.data import DataLoader
 from tqdm import tqdm
 
-from losses import Proxy_AVSL_Loss
+from losses import Proxy_AVSL_Loss, AVSL_ContrastiveLoss
 from model import AVSL_Similarity
 from dataset import CUB_dataset
 import pandas
@@ -22,6 +22,7 @@ def train(
         device,
         CNN_coeffs=(32,0.1),
         sim_coeffs=(32,0.1),
+        margin=1.0,
         save_dir=".",
         model_name="AVSL",
     ) -> None:
@@ -29,7 +30,8 @@ def train(
     # ============== Initialization =================
     train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, pin_memory=True)
     valid_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=True, pin_memory=True)
-    loss_fn = Proxy_AVSL_Loss(n_layers, *CNN_coeffs, *sim_coeffs)
+    # loss_fn = Proxy_AVSL_Loss(n_layers, *CNN_coeffs, *sim_coeffs)
+    loss_fn = AVSL_ContrastiveLoss(n_layers, margin)
     optimizer = torch.optim.Adam(model.parameters(), lr)
     losses = {"train":[],"val":[]}
     
@@ -80,7 +82,8 @@ if __name__ == "__main__":
         "batch_size":30,
         "device":torch.device("cuda"),
         "CNN_coeffs":(32,0.1),
-        "sim_coeffs":(32,0.1)
+        "sim_coeffs":(32,0.1),
+        "margin":1.0,
     }
     model_args = {
         "base_model_name":"ResNet50",
@@ -90,7 +93,7 @@ if __name__ == "__main__":
         "topk":32,
         "momentum":0.5,
         "p":2,
-        "use_proxy":True,
+        "use_proxy":False,
     }
     
     # ==================== Datasets ====================
