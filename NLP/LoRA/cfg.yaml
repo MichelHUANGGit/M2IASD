@@ -1,0 +1,18 @@
+model:
+  name: tinyllama1B_e2e_nlg
+  r: 2
+  target_layers: [q_proj, k_proj, v_proj, o_proj]
+
+training:
+  batch_size: 4
+  grad_accum_steps: 8
+  epochs: 5
+  warmup_epochs: 2
+  compile: false
+  weight_decay: 0.10
+  max_lr: 0.006
+  min_lr: 0.0006
+  beta1: 0.95
+  beta2: 0.98
+  max_grad_norm: 0.2
+  max_length: 256
