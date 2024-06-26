@@ -3,7 +3,6 @@ from utils import DataCollator, get_tokenizer
 
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
 from torch.utils.data import DataLoader
 
 from datasets import load_dataset
@@ -18,6 +17,7 @@ import csv
 
 @dataclass
 class TrainingCfg:
+    precision:str
     batch_size:int
     grad_accum_steps:int
     epochs:int
@@ -54,6 +54,7 @@ def load_config(config_path: str):
 def parse_args():
     parser = argparse.ArgumentParser()
     parser.add_argument('--yaml_config', type=str, default=r"LoRA/cfg.yaml", help="yaml config path")
+    parser.add_argument('--log_dir', type=str, default="LoRA/logs", help="logs directory")
     args = parser.parse_args()
     return args
 
@@ -83,13 +84,13 @@ def train():
     os.makedirs(run_dir)
     # create csv files for the losses
     val_csv_file = os.path.join(run_dir, "val_log.csv")
-    with open(val_csv_file, "w") as file:
+    with open(val_csv_file, "w", newline='') as file:
         writer = csv.writer(file)
         writer.writerow(["epoch", "step", "tokens_trained_on", "acc", "loss", "dt"])
     train_csv_file = os.path.join(run_dir, "train_log.csv")
-    with open(train_csv_file, "w") as file:
+    with open(train_csv_file, "w", newline='') as file:
         writer = csv.writer(file)
-        writer.writerow(["epoch", "step", "loss", "lr", "grad_norm", "dt", "tokens", "batch_per_sec"])
+        writer.writerow(["epoch", "step", "loss", "lr", "grad_norm", "dt", "tokens", "tok_per_sec"])
     # save the yaml config used
     with open(os.path.join(run_dir, "config.yaml"), "w") as file:
         yaml.dump(asdict(cfg), file)
@@ -106,10 +107,13 @@ def train():
     model.to(device)
     # Compiling the model accelerates the computations, but takes some time to compile at first. Only avaiable with cuda and python<3.12
     if train_cfg.compile:
-        print("Compiling...")
+        print("Compiling..."); t0 = time()
         model = torch.compile(model)
+        print(f"Compiled ! {time()-t0:.2f}")
     optimizer = configure_optimizers(model, weight_decay=train_cfg.weight_decay, learning_rate=train_cfg.max_lr, betas=(train_cfg.beta1, train_cfg.beta2), device_type=device_type)
     loss_fn = nn.CrossEntropyLoss()
+    # increases the computation speed
+    torch.set_float32_matmul_precision(train_cfg.precision)
 
     #dataset
     print("Loading dataset...")
@@ -122,6 +126,7 @@ def train():
     N = len(dataset["train"])
     warmup_steps = train_cfg.warmup_epochs * N / (train_cfg.batch_size * train_cfg.grad_accum_steps)
     max_steps = train_cfg.epochs * N / (train_cfg.batch_size * train_cfg.grad_accum_steps)
+
 
     def get_lr(step):
         '''from https://github.com/karpathy/build-nanogpt/blob/master/train_gpt2.py'''
@@ -144,8 +149,9 @@ def train():
 
         model.train()
         train_loss = 0.
-        step = 1
+        step = 0
         tokens_processed = 0
+        start = time()
         t0 = time()
         optimizer.zero_grad()
         for it, batch in enumerate(train_loader, start=1):
@@ -161,15 +167,15 @@ def train():
             modulo = it % train_cfg.grad_accum_steps
             if modulo == 0:
                 step += 1
-                norm = torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=train_cfg.max_grad_norm)
+                norm = torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=train_cfg.max_grad_norm).item()
                 lr = get_lr(step)
                 optimizer.step()
                 optimizer.zero_grad()
                 dt = time()-t0
-                batch_per_sec = train_cfg.batch_size * train_cfg.grad_accum_steps / dt
+                tok_per_sec = tokens_processed / (time()-start)
                 # step-wise metrics (not micro batch-wise)
-                print(f"Epoch: {epoch:2d} | Step: {step:4d} | loss:{train_loss:.4f} | lr:{lr:.6f} | grad norm: {norm.item():.4f} | step dt: {dt:.4f}s | tokens processed {tokens_processed:4d} | batch/sec {batch_per_sec:.4f}")
-                log_results(train_csv_file, [epoch, step, train_loss, lr, norm, dt, tokens_processed, batch_per_sec])
+                print(f"Epoch: {epoch:2d} | Step: {step:4d} | loss:{train_loss:.4f} | lr:{lr:.6f} | grad norm: {norm:.4f} | step dt: {dt:.4f}s | tokens processed {tokens_processed:4d} | tok/sec {tok_per_sec:.4f}")
+                log_results(train_csv_file, [epoch, step, train_loss, lr, norm, dt, tokens_processed, tok_per_sec])
                 t0 = time()
         # optimizer.step the remaining steps
         if modulo != 0:
@@ -179,17 +185,17 @@ def train():
             optimizer.step()
             optimizer.zero_grad()
             dt = time() - t0
-            batch_per_sec = train_cfg.batch_size * train_cfg.grad_accum_steps / dt
-            print(f"Epoch: {epoch:2d} | Step: {step:4d} | loss:{train_loss:.4f} | lr:{lr:.4f} | grad norm: {norm:.4f} | step dt: {dt:.4f}s | tokens processed: {tokens_processed:4d} | batch/sec {batch_per_sec:.4f}")
-            log_results(train_csv_file, [epoch, step, train_loss, lr, norm, dt, tokens_processed, batch_per_sec])
+            tok_per_sec = tokens_processed / dt
+            print(f"Epoch: {epoch:2d} | Step: {step:4d} | loss:{train_loss:.4f} | lr:{lr:.6f} | grad norm: {norm:.4f} | step dt: {dt:.4f}s | tokens processed {tokens_processed:4d} | tok/sec {tok_per_sec:.4f}")
+            log_results(train_csv_file, [epoch, step, train_loss, lr, norm, dt, tokens_processed, tok_per_sec])
         
         model.eval()
         val_loss = 0.
         correct = 0
         processed = 0
+        t0 = time()
         with torch.no_grad():
             for it, batch in enumerate(val_loader, start=1):
-                t0 = time()
                 input_ids, attention_mask = batch["input_ids"], batch["attention_mask"]
                 logits = model(input_ids, attention_mask)
                 lmask = batch["loss_mask"]

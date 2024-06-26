@@ -4,8 +4,9 @@ model:
   target_layers: [q_proj, k_proj, v_proj, o_proj]
 
 training:
+  precision: high
   batch_size: 4
-  grad_accum_steps: 8
+  grad_accum_steps: 2
   epochs: 5
   warmup_epochs: 2
   compile: false

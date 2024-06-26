@@ -87,6 +87,7 @@ if __name__ == "__main__":
     vocsize = 32000
     device = torch.device("cuda")
     random_inputs = torch.randint(low=0, high=vocsize, size=(B,L)).to(device)
+    LoRA_llama.to(device)
 
     # Infer
     with torch.no_grad():
