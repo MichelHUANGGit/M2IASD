@@ -152,8 +152,8 @@ def train():
     step = 0
     tokens_processed = 0
     for epoch in range(1, train_cfg.epochs+1):
-
         model.train()
+        last_tokens_processed = tokens_processed
         t0 = time()
         optimizer.zero_grad()
         for it, batch in enumerate(train_loader, start=1):
@@ -174,11 +174,12 @@ def train():
                 optimizer.step()
                 optimizer.zero_grad()
                 dt = time()-t0
-                tok_per_sec = tokens_processed / (time()-start)
+                tok_per_sec = (tokens_processed - last_tokens_processed) / dt
                 # step-wise metrics (not micro batch-wise)
-                print(f"Epoch: {epoch:2d} | Step: {step:4d} | tokens processed {tokens_processed:7d} | loss:{train_loss:.4f} | lr:{lr:.6f} | grad norm: {norm:.4f} | step dt: {dt:.4f}s | tok/sec {tok_per_sec:.4f}")
+                print(f"Epoch: {epoch:2d} | Step: {step:4d} | tokens processed {tokens_processed:8d} | loss:{train_loss:.4f} | lr:{lr:.6f} | grad norm: {norm:.4f} | step dt: {dt:.4f}s | tok/sec {tok_per_sec:.4f}")
                 log_results(train_csv_file, [epoch, step, tokens_processed, train_loss, lr, norm, dt, tok_per_sec])
                 t0 = time()
+                last_tokens_processed = tokens_processed
         # optimizer.step the remaining steps
         if modulo != 0:
             step += 1
@@ -192,8 +193,8 @@ def train():
             optimizer.step()
             optimizer.zero_grad()
             dt = time() - t0
-            tok_per_sec = tokens_processed / dt
-            print(f"Epoch: {epoch:2d} | Step: {step:4d} | tokens processed {tokens_processed:7d} | loss:{train_loss:.4f} | lr:{lr:.6f} | grad norm: {norm:.4f} | step dt: {dt:.4f}s | tok/sec {tok_per_sec:.4f}")
+            tok_per_sec = (tokens_processed - last_tokens_processed) / dt
+            print(f"Epoch: {epoch:2d} | Step: {step:4d} | tokens processed {tokens_processed:8d} | loss:{train_loss:.4f} | lr:{lr:.6f} | grad norm: {norm:.4f} | step dt: {dt:.4f}s | tok/sec {tok_per_sec:.4f}")
             log_results(train_csv_file, [epoch, step, tokens_processed, train_loss, lr, norm, dt, tok_per_sec])
         
         model.eval()
@@ -217,6 +218,8 @@ def train():
                 print(f"Epoch: {epoch}| Step: {step:4d} | acc: {acc*100:.2f} | loss:{val_loss:.4f} | eval dt: {dt:.4f} | tokens processed {processed:4d}")
             log_results(val_csv_file, [epoch, step, tokens_processed, acc, val_loss, dt])
     
+    end = time() - start
+    print(f"Total time : {end:.4f} | total tokens processed {tokens_processed:8d} | ratio: {tokens_processed/end:.4f}")
     torch.save(model, os.path.join(run_dir, "model.pt"))
             
 
