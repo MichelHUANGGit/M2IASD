@@ -5,15 +5,15 @@ model:
 
 training:
   precision: high
-  batch_size: 4
-  grad_accum_steps: 2
-  epochs: 5
-  warmup_epochs: 2
-  compile: false
+  batch_size: 16
+  grad_accum_steps: 4
+  epochs: 3
+  warmup_epochs: 1
+  compile: true
   weight_decay: 0.10
   max_lr: 0.006
   min_lr: 0.0006
   beta1: 0.95
-  beta2: 0.98
-  max_grad_norm: 0.2
+  beta2: 0.99
+  max_grad_norm: 1.0
   max_length: 256
