@@ -1,8 +1,8 @@
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
 from transformers import AutoModelForCausalLM
 import inspect
+import os
 
 
 class LoRA_Linear(nn.Module):
@@ -55,6 +55,55 @@ def apply_LoRA_tinyllama(target_layers=["q_proj","k_proj","v_proj","o_proj"], r=
     print("After Trainable parameters:", count_parameters(model))
     
     return model
+
+@torch.no_grad
+def merge_tinyllama(model:nn.Module, target_layers=["q_proj","k_proj","v_proj","o_proj"]):
+    
+    n_layers = len(model.model.layers)
+    for i in range(n_layers):
+        if "q_proj" in target_layers:
+            # Access layer
+            lora_layer = model.model.layers[i].self_attn.q_proj
+            # merge the weights by adding A@B (the shapes of the matrices are reversed in torch)
+            lora_layer.base_layer.weight += (lora_layer.A.weight @ lora_layer.B.weight)
+            # redefine the layer as the original layer
+            model.model.layers[i].self_attn.q_proj = lora_layer.base_layer
+        if "k_proj" in target_layers:
+            lora_layer = model.model.layers[i].self_attn.k_proj
+            lora_layer.base_layer.weight += (lora_layer.A.weight @ lora_layer.B.weight)
+            model.model.layers[i].self_attn.k_proj = lora_layer.base_layer
+        if "v_proj" in target_layers:
+            lora_layer = model.model.layers[i].self_attn.v_proj
+            lora_layer.base_layer.weight += (lora_layer.A.weight @ lora_layer.B.weight)
+            model.model.layers[i].self_attn.v_proj = lora_layer.base_layer
+        if "o_proj" in target_layers:
+            lora_layer = model.model.layers[i].self_attn.o_proj
+            lora_layer.base_layer.weight += (lora_layer.A.weight @ lora_layer.B.weight)
+            model.model.layers[i].self_attn.o_proj = lora_layer.base_layer
+
+
+def save_AB_weights_tinyllama(save_dir, model, target_layers=["q_proj","k_proj","v_proj","o_proj"]):
+    n_layers = len(model.model.layers)
+    if not os.path.exists(save_dir):
+        os.makedirs(save_dir)
+
+    for i in range(n_layers):
+        for target_layer in target_layers:
+            module_name = f"model.layers.{i}.self_attn.{target_layer}"
+            lora_layer = model.get_submodule(module_name)
+            torch.save(lora_layer.A.weight, os.path.join(save_dir, module_name+".A.pt"))
+            torch.save(lora_layer.B.weight, os.path.join(save_dir, module_name+".B.pt"))
+
+
+def load_AB_weights_tinyllama(save_dir, model, target_layers=["q_proj","k_proj","v_proj","o_proj"]):
+    n_layers = len(model.model.layers)
+    for i in range(n_layers):
+        for target_layer in target_layers:
+            module_name = f"model.layers.{i}.self_attn.{target_layer}"
+            lora_layer = model.get_submodule(module_name)
+            lora_layer.A.weight.data = torch.load(os.path.join(save_dir, module_name+".A.pt"))
+            lora_layer.B.weight.data = torch.load(os.path.join(save_dir, module_name+".B.pt"))
+
 
 def configure_optimizers(model, weight_decay, learning_rate, betas, device_type):
     # start with all of the candidate parameters (that require grad)
