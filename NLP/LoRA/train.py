@@ -209,7 +209,8 @@ def train():
                 # dataset-wise metrics updated sequentially
                 print(f"Epoch: {epoch}| Step: {step:4d} | acc: {acc*100:.2f} | loss:{val_loss:.4f} | eval dt: {dt:.4f} | tokens processed {processed:4d}")
             log_results(val_csv_file, [epoch, step, tokens_processed, acc, val_loss, dt])
-        import code;code.interact(local=locals())
+    
+    torch.save(model, os.path.join(run_dir, "model.pt"))
             
 
 if __name__ == "__main__":
