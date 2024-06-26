@@ -70,11 +70,12 @@ def train():
     cfg = load_config(args.yaml_config)
     train_cfg = cfg.training
     model_cfg = cfg.model
-    print(f"Config : {cfg}")
+    print(f"Train config : {train_cfg}")
+    print(f"Model config {model_cfg}")
     
     # Metrics logs stuff
     # create directory
-    log_dir = r"LoRA/logs"
+    log_dir = args.log_dir
     today = strftime("%Y-%m-%d")
     i = 0
     run_dir = os.path.join(log_dir, today, f"run{i}")
@@ -90,7 +91,7 @@ def train():
     train_csv_file = os.path.join(run_dir, "train_log.csv")
     with open(train_csv_file, "w", newline='') as file:
         writer = csv.writer(file)
-        writer.writerow(["epoch", "step", "loss", "lr", "grad_norm", "dt", "tokens", "tok_per_sec"])
+        writer.writerow(["epoch", "step", "tokens", "loss", "lr", "grad_norm", "dt", "tok_per_sec"])
     # save the yaml config used
     with open(os.path.join(run_dir, "config.yaml"), "w") as file:
         yaml.dump(asdict(cfg), file)
@@ -105,11 +106,13 @@ def train():
     model.resize_token_embeddings(len(tokenizer))
     assert model.lm_head.weight.shape == model.model.embed_tokens.weight.shape
     model.to(device)
-    # Compiling the model accelerates the computations, but takes some time to compile at first. Only avaiable with cuda and python<3.12
+
+    # Compiling the model accelerates the computations, but takes some time to compile at the 1st step. 
+    # Only avaiable with cuda and python<3.12
     if train_cfg.compile:
         print("Compiling..."); t0 = time()
         model = torch.compile(model)
-        print(f"Compiled ! {time()-t0:.2f}")
+        print(f"Compiled ! {time()-t0:.2f}s")
     optimizer = configure_optimizers(model, weight_decay=train_cfg.weight_decay, learning_rate=train_cfg.max_lr, betas=(train_cfg.beta1, train_cfg.beta2), device_type=device_type)
     loss_fn = nn.CrossEntropyLoss()
     # increases the computation speed
@@ -126,7 +129,7 @@ def train():
     N = len(dataset["train"])
     warmup_steps = train_cfg.warmup_epochs * N / (train_cfg.batch_size * train_cfg.grad_accum_steps)
     max_steps = train_cfg.epochs * N / (train_cfg.batch_size * train_cfg.grad_accum_steps)
-
+    print(f"warmup steps: {warmup_steps} | max_steps {max_steps}")
 
     def get_lr(step):
         '''from https://github.com/karpathy/build-nanogpt/blob/master/train_gpt2.py'''
@@ -145,13 +148,12 @@ def train():
 
     print("Begin Training")
     print("="*100)
+    start = time()
+    step = 0
+    tokens_processed = 0
     for epoch in range(1, train_cfg.epochs+1):
 
         model.train()
-        train_loss = 0.
-        step = 0
-        tokens_processed = 0
-        start = time()
         t0 = time()
         optimizer.zero_grad()
         for it, batch in enumerate(train_loader, start=1):
@@ -174,20 +176,25 @@ def train():
                 dt = time()-t0
                 tok_per_sec = tokens_processed / (time()-start)
                 # step-wise metrics (not micro batch-wise)
-                print(f"Epoch: {epoch:2d} | Step: {step:4d} | loss:{train_loss:.4f} | lr:{lr:.6f} | grad norm: {norm:.4f} | step dt: {dt:.4f}s | tokens processed {tokens_processed:4d} | tok/sec {tok_per_sec:.4f}")
-                log_results(train_csv_file, [epoch, step, train_loss, lr, norm, dt, tokens_processed, tok_per_sec])
+                print(f"Epoch: {epoch:2d} | Step: {step:4d} | tokens processed {tokens_processed:7d} | loss:{train_loss:.4f} | lr:{lr:.6f} | grad norm: {norm:.4f} | step dt: {dt:.4f}s | tok/sec {tok_per_sec:.4f}")
+                log_results(train_csv_file, [epoch, step, tokens_processed, train_loss, lr, norm, dt, tok_per_sec])
                 t0 = time()
         # optimizer.step the remaining steps
         if modulo != 0:
             step += 1
             norm = torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=train_cfg.max_grad_norm)
-            lr = get_lr(step)
+            # if modulo == 1 and grad_accum_steps = 8, we did .backward() once, but the loss is divided by 8 instead of 1
+            # Therefore we should rescale the lr by 8/1 = 1
+            # if modulo == 3 and grad_accum_steps = 8, we did .backward() 3 times, but the loss is divided by 8 instead of 3
+            # Therefore we should rescale the lr by 8/3 = 2.67 etc...
+            lr_rescaler = train_cfg.grad_accum_steps / modulo
+            lr = get_lr(step) * lr_rescaler
             optimizer.step()
             optimizer.zero_grad()
             dt = time() - t0
             tok_per_sec = tokens_processed / dt
-            print(f"Epoch: {epoch:2d} | Step: {step:4d} | loss:{train_loss:.4f} | lr:{lr:.6f} | grad norm: {norm:.4f} | step dt: {dt:.4f}s | tokens processed {tokens_processed:4d} | tok/sec {tok_per_sec:.4f}")
-            log_results(train_csv_file, [epoch, step, train_loss, lr, norm, dt, tokens_processed, tok_per_sec])
+            print(f"Epoch: {epoch:2d} | Step: {step:4d} | tokens processed {tokens_processed:7d} | loss:{train_loss:.4f} | lr:{lr:.6f} | grad norm: {norm:.4f} | step dt: {dt:.4f}s | tok/sec {tok_per_sec:.4f}")
+            log_results(train_csv_file, [epoch, step, tokens_processed, train_loss, lr, norm, dt, tok_per_sec])
         
         model.eval()
         val_loss = 0.
@@ -197,7 +204,7 @@ def train():
         with torch.no_grad():
             for it, batch in enumerate(val_loader, start=1):
                 input_ids, attention_mask = batch["input_ids"], batch["attention_mask"]
-                logits = model(input_ids, attention_mask)
+                logits = model(input_ids, attention_mask)["logits"]
                 lmask = batch["loss_mask"]
                 labels = batch["labels"][lmask]
                 loss = loss_fn(logits[lmask], labels)
