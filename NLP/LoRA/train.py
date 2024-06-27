@@ -153,6 +153,7 @@ def train():
     for epoch in range(1, train_cfg.epochs+1):
         model.train()
         last_tokens_processed = tokens_processed
+        train_loss = 0.
         t0 = time()
         optimizer.zero_grad()
         for it, batch in enumerate(train_loader, start=1):
@@ -163,7 +164,7 @@ def train():
             loss = loss_fn(logits[lmask], labels) / train_cfg.grad_accum_steps
             loss.backward()
 
-            train_loss = loss.item()
+            train_loss += loss.item()
             tokens_processed += labels.size(0)
             modulo = it % train_cfg.grad_accum_steps
             if modulo == 0:
