@@ -1,4 +1,4 @@
-from lora import apply_LoRA_tinyllama, configure_optimizers
+from lora import apply_LoRA_tinyllama, configure_optimizers, save_AB_weights_tinyllama
 from utils import DataCollator, get_tokenizer
 
 import torch
@@ -63,7 +63,6 @@ def log_results(csv_file, metrics_list):
         writer = csv.writer(file)
         writer.writerow(metrics_list)
     
-
 def train():
     #Config stuff
     args = parse_args()
@@ -220,7 +219,9 @@ def train():
     
     end = time() - start
     print(f"Total time : {end:.4f} | total tokens processed {tokens_processed:8d} | ratio: {tokens_processed/end:.4f}")
-    torch.save(model, os.path.join(run_dir, "model.pt"))
+    print("Saving model...")
+    save_AB_weights_tinyllama(os.path.join(run_dir, "model_weights"), model, model_cfg.target_layers)
+    print("Saved!")
             
 
 if __name__ == "__main__":
