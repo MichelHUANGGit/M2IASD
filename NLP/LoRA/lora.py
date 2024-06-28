@@ -7,10 +7,12 @@ import os
 
 class LoRA_Linear(nn.Module):
 
-    def __init__(self, base_layer:nn.Module, r:int):
+    def __init__(self, base_layer:nn.Module, r:int, alpha:float=1.):
         super().__init__()
         self.base_layer = base_layer
         self.r = r
+        self.alpha = alpha
+        self.scaling = alpha / r
         self.base_layer.weight.requires_grad = False
         self.output_dim, self.input_dim = base_layer.weight.shape
 
@@ -24,7 +26,7 @@ class LoRA_Linear(nn.Module):
         # print("B", self.B.weight.shape)
         # print("A", self.A.weight.shape)
         y = self.base_layer(x)
-        y += self.A(self.B(x))
+        y += (self.A(self.B(x)) * self.scaling)
         return y
     
 def count_parameters(model):

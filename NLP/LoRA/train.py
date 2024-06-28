@@ -36,6 +36,7 @@ class TrainingCfg:
 class ModelCfg:
     name:str
     r:int
+    alpha:float
     target_layers:list[str]
 
 @dataclass
@@ -185,7 +186,7 @@ def train():
                 log_results(train_csv_file, [epoch, step, tokens_processed, train_loss, lr, norm, dt, tok_per_sec])
                 t0 = time()
                 last_tokens_processed = tokens_processed
-                import code; code.interact(local=locals())
+                # import code; code.interact(local=locals())
         # optimizer.step the remaining steps
         if modulo != 0:
             step += 1
