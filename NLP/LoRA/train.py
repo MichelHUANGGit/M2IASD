@@ -1,5 +1,5 @@
 from lora import apply_LoRA_tinyllama, configure_optimizers, save_AB_weights_tinyllama
-from utils import DataCollator, get_tokenizer
+from data_utils import DataCollator, get_tokenizer, preprocess_fn
 
 import torch
 import torch.nn as nn
@@ -21,8 +21,9 @@ class TrainingCfg:
     batch_size:int
     grad_accum_steps:int
     epochs:int
-    warmup_epochs:int
-    compile:bool
+    warmup_epochs:float
+    use_compile:bool
+    use_autocast:bool
     weight_decay:float
     max_lr:float
     min_lr:float
@@ -100,18 +101,17 @@ def train():
     device = torch.device("cuda")
     device_type = "cuda"
     print(f"Loading {model_cfg.name} ...")
-    model = apply_LoRA_tinyllama(target_layers=model_cfg.target_layers, r=model_cfg.r)
     tokenizer = get_tokenizer()
-    model.resize_token_embeddings(len(tokenizer))
+    model = apply_LoRA_tinyllama(target_layers=model_cfg.target_layers, r=model_cfg.r, new_vocsize=len(tokenizer))
     assert model.lm_head.weight.shape == model.model.embed_tokens.weight.shape
     model.to(device)
 
     # Compiling the model accelerates the computations, but takes some time to compile at the 1st step. 
     # Only avaiable with cuda and python<3.12
-    if train_cfg.compile:
+    if train_cfg.use_compile:
         print("Compiling..."); t0 = time()
         model = torch.compile(model)
-        print(f"Compiled ! {time()-t0:.2f}s")
+        print(f"Compiled in {time()-t0:.2f}s, note: the first iteration will take longer")
     optimizer = configure_optimizers(model, weight_decay=train_cfg.weight_decay, learning_rate=train_cfg.max_lr, betas=(train_cfg.beta1, train_cfg.beta2), device_type=device_type)
     loss_fn = nn.CrossEntropyLoss()
     # increases the computation speed
@@ -120,12 +120,14 @@ def train():
     #dataset
     print("Loading dataset...")
     dataset = load_dataset("tuetschek/e2e_nlg")
-    data_collator = DataCollator(tokenizer=tokenizer, max_length=train_cfg.max_length, device=device)
-    train_loader = DataLoader(dataset["train"], batch_size=train_cfg.batch_size, collate_fn=data_collator)
-    val_loader = DataLoader(dataset["validation"], batch_size=train_cfg.batch_size, collate_fn=data_collator)
+    print("Preprocessing the dataset:")
+    dataset = dataset.map(preprocess_fn, fn_kwargs={"tokenizer":tokenizer})
+    data_collator = DataCollator(pad_token_id=tokenizer.pad_token_id, max_length=train_cfg.max_length, device=device)
+    train_loader = DataLoader(dataset["train"], batch_size=train_cfg.batch_size, collate_fn=data_collator) # type: ignore
+    val_loader = DataLoader(dataset["validation"], batch_size=train_cfg.batch_size, collate_fn=data_collator) # type: ignore
 
     # Learning rate scheduling
-    N = len(dataset["train"])
+    N = len(dataset["train"]) # type: ignore
     warmup_steps = train_cfg.warmup_epochs * N / (train_cfg.batch_size * train_cfg.grad_accum_steps)
     max_steps = train_cfg.epochs * N / (train_cfg.batch_size * train_cfg.grad_accum_steps)
     print(f"warmup steps: {warmup_steps} | max_steps {max_steps}")
@@ -158,10 +160,13 @@ def train():
         optimizer.zero_grad()
         for it, batch in enumerate(train_loader, start=1):
             input_ids, attention_mask = batch["input_ids"], batch["attention_mask"]
-            logits = model(input_ids, attention_mask)["logits"]
-            lmask = batch["loss_mask"]
-            labels = batch["labels"][lmask]
-            loss = loss_fn(logits[lmask], labels) / train_cfg.grad_accum_steps
+            if train_cfg.use_autocast:
+                with torch.autocast(device_type=device_type, dtype=torch.bfloat16):
+                    logits = model(input_ids, attention_mask, use_cache=False)['logits']
+            else:
+                logits = model(input_ids, attention_mask, use_cache=False)['logits']
+            labels = batch["labels"]
+            loss = loss_fn(logits[batch["loss_mask"]], labels) / train_cfg.grad_accum_steps
             loss.backward()
 
             train_loss += loss.item()
@@ -180,6 +185,7 @@ def train():
                 log_results(train_csv_file, [epoch, step, tokens_processed, train_loss, lr, norm, dt, tok_per_sec])
                 t0 = time()
                 last_tokens_processed = tokens_processed
+                import code; code.interact(local=locals())
         # optimizer.step the remaining steps
         if modulo != 0:
             step += 1
@@ -205,9 +211,13 @@ def train():
         with torch.no_grad():
             for it, batch in enumerate(val_loader, start=1):
                 input_ids, attention_mask = batch["input_ids"], batch["attention_mask"]
-                logits = model(input_ids, attention_mask)["logits"]
+                if train_cfg.use_autocast:
+                    with torch.autocast(device_type=device_type, dtype=torch.bfloat16):
+                        logits = model(input_ids, attention_mask, use_cache=False)["logits"]
+                else:
+                    logits = model(input_ids, attention_mask, use_cache=False)["logits"]
+                labels = batch["labels"]
                 lmask = batch["loss_mask"]
-                labels = batch["labels"][lmask]
                 loss = loss_fn(logits[lmask], labels)
                 val_loss = (val_loss * (it-1) + loss.item()) / it
                 correct += torch.sum(logits[lmask].argmax(dim=1) == labels).item()
