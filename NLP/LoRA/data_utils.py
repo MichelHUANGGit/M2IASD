@@ -31,7 +31,7 @@ class DataCollator:
             input_ids[i] += [self.pad_token_id]*(self.max_length-current_length)
         input_ids = torch.tensor(input_ids, dtype=torch.int32)
         # labels need to be of dtype long (=int64)
-        labels = torch.cat([torch.tensor(sample["labels"], dtype=torch.long) for sample in batch])
+        labels = torch.cat([torch.tensor(sample["labels"], dtype=torch.int64) for sample in batch])
 
         return dict(
             input_ids=input_ids.to(self.device), 
