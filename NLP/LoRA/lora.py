@@ -32,9 +32,18 @@ def count_parameters(model):
     return f"{total_params:,}"
 
 
-def apply_LoRA_tinyllama(target_layers=["q_proj","k_proj","v_proj","o_proj"], r=4):
+def apply_LoRA_tinyllama(target_layers=["q_proj","k_proj","v_proj","o_proj"], r=4, new_vocsize=None):
+    '''Initializes a tinyllama 1B model with LoRA layers applied on target_layers'''
+
     model_id = "TinyLlama/TinyLlama-1.1B-intermediate-step-1431k-3T"
     model = AutoModelForCausalLM.from_pretrained(model_id)
+    # resize the emb layer and the head, to add the pad token (full of zeros)
+    if new_vocsize is not None:
+        new_tokens = new_vocsize - 32000
+        model.resize_token_embeddings(new_vocsize)
+        model_dim = model.config.hidden_size
+        model.model.embed_tokens.weight.data[-new_tokens:] = torch.zeros(size=(model_dim,))
+        model.lm_head.weight.data[-new_tokens:] = torch.zeros(size=(model_dim,))
     print("Before Trainable parameters:", count_parameters(model))
 
     for param in model.parameters():
@@ -95,14 +104,15 @@ def save_AB_weights_tinyllama(save_dir, model, target_layers=["q_proj","k_proj",
             torch.save(lora_layer.B.weight, os.path.join(save_dir, module_name+".B.pt"))
 
 
-def load_AB_weights_tinyllama(save_dir, model, target_layers=["q_proj","k_proj","v_proj","o_proj"]):
+def load_AB_weights_tinyllama(save_dir, model, target_layers):
+    device = model.device
     n_layers = len(model.model.layers)
     for i in range(n_layers):
         for target_layer in target_layers:
             module_name = f"model.layers.{i}.self_attn.{target_layer}"
             lora_layer = model.get_submodule(module_name)
-            lora_layer.A.weight.data = torch.load(os.path.join(save_dir, module_name+".A.pt"))
-            lora_layer.B.weight.data = torch.load(os.path.join(save_dir, module_name+".B.pt"))
+            lora_layer.A.weight.data = torch.load(os.path.join(save_dir, module_name+".A.pt"), map_location=device)
+            lora_layer.B.weight.data = torch.load(os.path.join(save_dir, module_name+".B.pt"), map_location=device)
 
 
 def configure_optimizers(model, weight_decay, learning_rate, betas, device_type):
