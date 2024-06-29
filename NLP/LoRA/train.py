@@ -1,9 +1,8 @@
 from lora import apply_LoRA_tinyllama, configure_optimizers, save_AB_weights_tinyllama
-from data_utils import DataCollator, get_tokenizer, preprocess_fn, CustomDataCollator, CustomDataLoader
+from data_utils import get_tokenizer, preprocess_fn, CustomDataCollator, CustomDataLoader
 
 import torch
 import torch.nn as nn
-from torch.utils.data import DataLoader
 
 from datasets import load_dataset
 from time import time, strftime
@@ -23,7 +22,8 @@ class TrainingCfg:
     grad_accum_steps:int
     epochs:float
     warmup_epochs:float
-    epoch_per_eval:float
+    eval_every_x_epoch:float
+    save_every_x_epoch:float
     use_compile:bool
     use_autocast:bool
     weight_decay:float
@@ -58,8 +58,8 @@ def load_config(config_path: str):
 
 def parse_args():
     parser = argparse.ArgumentParser()
-    parser.add_argument('--yaml_config', type=str, default=r"LoRA/cfg.yaml", help="yaml config path")
-    parser.add_argument('--log_dir', type=str, default="LoRA/logs", help="logs directory")
+    parser.add_argument('--yaml_config', type=str, default="cfg.yaml", help="yaml config path")
+    parser.add_argument('--log_dir', type=str, default="logs", help="logs directory")
     args = parser.parse_args()
     return args
 
@@ -165,15 +165,17 @@ def train():
     train_loader = CustomDataLoader(dataset["train"], batch_size=train_cfg.batch_size, collate_fn=collate_fn) # type: ignore
     val_loader = CustomDataLoader(dataset["validation"], batch_size=train_cfg.batch_size, collate_fn=collate_fn) # type: ignore
     print("============================================================================================")
-    
+
     N = len(dataset["train"]) # type: ignore
     steps_per_epoch = N / (train_cfg.batch_size * train_cfg.grad_accum_steps)
     warmup_steps = train_cfg.warmup_epochs * steps_per_epoch
     max_steps = round(train_cfg.epochs * steps_per_epoch)
-    steps_per_eval = round(train_cfg.epoch_per_eval * steps_per_epoch)
-    print(f"warmup steps: {warmup_steps:.2f} | max_steps {max_steps} | Steps per epoch: {steps_per_epoch:.2f} | Steps per eval: {steps_per_eval:.2f}")
+    eval_every_n_steps = round(train_cfg.eval_every_x_epoch * steps_per_epoch)
+    save_every_n_steps = round(train_cfg.save_every_x_epoch * steps_per_epoch)
+    print(f"warmup steps: {warmup_steps:.2f} | max_steps {max_steps} | Steps per epoch: {steps_per_epoch:.2f} | Eval every {eval_every_n_steps} steps | Save every {save_every_n_steps} steps")
 
     def get_lr(step):
+        # Learning rate scheduling
         if train_cfg.use_lr_scheduler:
             '''from https://github.com/karpathy/build-nanogpt/blob/master/train_gpt2.py'''
             # 1) linear warmup for warmup_iters steps
@@ -221,24 +223,28 @@ def train():
         lr = get_lr(step) * model_cfg.alpha / model_cfg.r
         optimizer.step()
         optimizer.zero_grad()
-        dt = time()-t0
         tok_per_sec = (tokens_processed - last_tokens_processed) / dt
         epoch = step/steps_per_epoch
+        dt = time()-t0
         # step-wise metrics
         print(f"Epoch: {epoch:2f} | Step: {step:4d} | tokens processed {tokens_processed:8d} | loss:{train_loss:.4f} | lr:{lr:.6f} | grad norm: {norm:.4f} | step dt: {dt:.4f}s | tok/sec {tok_per_sec:.4f}")
         log_results(train_csv_file, [epoch, step, tokens_processed, train_loss, lr, norm, dt, tok_per_sec])
         last_tokens_processed = tokens_processed
-        t0 = time()
         # import code; code.interact(local=locals())
 
-        if step % steps_per_eval == 0:
+        if step % eval_every_n_steps == 0:
             acc, val_loss, dt = evaluate(model, val_loader, loss_fn, train_cfg.use_autocast, device_type)
             log_results(val_csv_file, [epoch, step, tokens_processed, acc, val_loss, dt])
-    
+
+        if step % save_every_n_steps ==0:
+            print(f"Saving {step}-step model...")
+            save_AB_weights_tinyllama(os.path.join(run_dir, "model_weights", f"step{step}"), model, model_cfg.target_layers)
+            print("Saved!")
+            
     end = time() - start
     print(f"Total time : {end:.4f} | total tokens processed {tokens_processed:8d} | ratio: {tokens_processed/end:.4f}")
-    print("Saving model...")
-    save_AB_weights_tinyllama(os.path.join(run_dir, "model_weights"), model, model_cfg.target_layers)
+    print("Saving final model...")
+    save_AB_weights_tinyllama(os.path.join(run_dir, "model_weights", "final"), model, model_cfg.target_layers)
     print("Saved!")
             
 
