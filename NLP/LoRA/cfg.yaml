@@ -8,13 +8,15 @@ training:
   precision: high
   batch_size: 4
   grad_accum_steps: 2
-  epochs: 3
+  epochs: 2.0
   warmup_epochs: 0.5
+  epoch_per_eval: 0.5
   use_compile: false
   use_autocast: true
   weight_decay: 0.10
-  max_lr: 0.001
-  min_lr: 0.0006
+  use_lr_scheduler: true
+  max_lr: 0.005
+  min_lr: 0.001
   beta1: 0.95
   beta2: 0.99
   max_grad_norm: 1.0
