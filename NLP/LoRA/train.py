@@ -13,6 +13,7 @@ from dataclasses import dataclass, asdict
 from math import pi, cos
 import os
 import csv
+from tqdm import tqdm
 
 
 @dataclass
@@ -67,31 +68,34 @@ def log_results(csv_file, metrics_list):
         writer = csv.writer(file)
         writer.writerow(metrics_list)
 
+@torch.no_grad
 def evaluate(model, loader:CustomDataLoader, loss_fn:nn.Module, use_autocast=True, device_type="cuda"):
+    # [NEXT TOKEN PREDICTION EVALUATION]
+    # !!! This is not comparable to NLG tasks because here the model has access to the true previous tokens !!!
     model.eval()
     val_loss = 0.
     correct = 0
     processed = 0
     t0 = time()
-    with torch.no_grad():
-        for i in range(1, len(loader)+1):
-            batch = loader.next_batch()
-            input_ids, attention_mask = batch["input_ids"], batch["attention_mask"]
-            if use_autocast:
-                with torch.autocast(device_type=device_type, dtype=torch.bfloat16):
-                    logits = model(input_ids, attention_mask, use_cache=False)["logits"]
-            else:
+    progress_bar = tqdm(range(1, len(loader)+1), unit='it')
+    for i in progress_bar:
+        batch = loader.next_batch()
+        input_ids, attention_mask = batch["input_ids"], batch["attention_mask"]
+        if use_autocast:
+            with torch.autocast(device_type=device_type, dtype=torch.bfloat16):
                 logits = model(input_ids, attention_mask, use_cache=False)["logits"]
-            labels = batch["labels"]
-            lmask = batch["loss_mask"]
-            loss = loss_fn(logits[lmask], labels)
-            val_loss = (val_loss * (i-1) + loss.item()) / i
-            correct += torch.sum(logits[lmask].argmax(dim=1) == labels).item()
-            processed += len(labels)
-            acc = correct / processed
-            dt = time() - t0
-            # validation dataset-wise metrics updated sequentially
-            print(f"acc: {acc*100:.2f}% | loss:{val_loss:.4f} | eval dt: {dt:.4f}")
+        else:
+            logits = model(input_ids, attention_mask, use_cache=False)["logits"]
+        labels = batch["labels"]
+        lmask = batch["loss_mask"]
+        loss = loss_fn(logits[lmask], labels)
+        val_loss = (val_loss * (i-1) + loss.item()) / i
+        correct += torch.sum(logits[lmask].argmax(dim=1) == labels).item()
+        processed += len(labels)
+        acc = correct / processed
+        # validation dataset-wise metrics updated sequentially
+        progress_bar.set_description(f"acc: {acc*100:.2f}% | loss:{val_loss:.4f}")
+    dt = time() - t0
     return acc, val_loss, dt
     
 def train():
@@ -126,6 +130,7 @@ def train():
     with open(os.path.join(run_dir, "config.yaml"), "w") as file:
         yaml.dump(asdict(cfg), file)
     print(f"Logs saved at {run_dir}!")
+    print("============================================================================================")
 
     #model and tokenizer
     device = torch.device("cuda")
@@ -144,8 +149,9 @@ def train():
         print(f"Compiled in {time()-t0:.2f}s, note: the first iteration will take longer")
     optimizer = configure_optimizers(model, weight_decay=train_cfg.weight_decay, learning_rate=train_cfg.max_lr, betas=(train_cfg.beta1, train_cfg.beta2), device_type=device_type)
     loss_fn = nn.CrossEntropyLoss()
-    # increases the computation speed
+    # trades precision for computation speed
     torch.set_float32_matmul_precision(train_cfg.precision)
+    print("============================================================================================")
 
     #dataset
     print("Loading dataset...")
@@ -158,8 +164,8 @@ def train():
     collate_fn = CustomDataCollator(pad_token_id=tokenizer.pad_token_id, max_length=train_cfg.max_length, device=device)
     train_loader = CustomDataLoader(dataset["train"], batch_size=train_cfg.batch_size, collate_fn=collate_fn) # type: ignore
     val_loader = CustomDataLoader(dataset["validation"], batch_size=train_cfg.batch_size, collate_fn=collate_fn) # type: ignore
-
-    # Learning rate scheduling
+    print("============================================================================================")
+    
     N = len(dataset["train"]) # type: ignore
     steps_per_epoch = N / (train_cfg.batch_size * train_cfg.grad_accum_steps)
     warmup_steps = train_cfg.warmup_epochs * steps_per_epoch
@@ -182,11 +188,16 @@ def train():
             return train_cfg.max_lr
     
     print("Begin Training")
-    print("="*100)
+    print("============================================================================================")
     start = time()
-    step = 0
     tokens_processed = 0
     last_tokens_processed = tokens_processed
+    # [NEXT TOKEN PREDICTION EVALUATION]
+    # Evaluate before training, the baseline performance should be around 56% accuracy 
+    # !!! This is not comparable to NLG tasks because here the model has access to the true previous tokens !!!
+    acc, val_loss, dt = evaluate(model, val_loader, loss_fn, train_cfg.use_autocast, device_type)
+    log_results(val_csv_file, [0., 0, tokens_processed, acc, val_loss, dt])
+
     for step in range(1, max_steps+1):
         model.train()
         train_loss = 0.
