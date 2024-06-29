@@ -25,10 +25,10 @@ class DataCollator:
         attention_mask = torch.zeros(size=(batch_size, self.max_length,), dtype=torch.bool)
         loss_mask = torch.zeros(size=(batch_size, self.max_length,), dtype=torch.bool)
         for i, sample in enumerate(batch):
-            attention_mask[i, :len(input_ids[i])] = 1
-            loss_mask[i, len(sample['input_ids']):len(sample['input_ids'])+len(sample['labels'])] = True
-            current_length = len(input_ids[i])
-            input_ids[i] += [self.pad_token_id]*(self.max_length-current_length)
+            t, dt = len(sample["input_ids"]), len(sample["labels"])
+            attention_mask[i, :t+dt] = True
+            loss_mask[i, t-1:t+dt-1] = True # -1 because the labels are shifted
+            input_ids[i] += [self.pad_token_id]*(self.max_length-t-dt)
         input_ids = torch.tensor(input_ids, dtype=torch.int32)
         # labels need to be of dtype long (=int64)
         labels = torch.cat([torch.tensor(sample["labels"], dtype=torch.int64) for sample in batch])
@@ -38,7 +38,59 @@ class DataCollator:
             attention_mask=attention_mask.to(self.device), 
             loss_mask=loss_mask.to(self.device), 
             labels=labels.to(self.device)
-        )  
+        )
+    
+class CustomDataCollator:
+    
+    def __init__(self, pad_token_id, max_length, device):
+        self.pad_token_id = pad_token_id
+        self.max_length = max_length
+        self.device = device
+
+    def __call__(self, batch:dict):
+        '''
+        The input of the model should be the restaurant description + some separator + human_reference, as the model is pre-trained to predict the next token
+        it'll do a next token prediction, if it were perfect, we'd have a shifted (by 1) input.
+        We can then define the targets as the shifted input, and compute a loss. 
+        The loss should only be computed for tokens after '<sep>'.
+        '''
+        batch_size = len(batch['input_ids'])
+        input_ids = [batch['input_ids'][i] + batch['labels'][i] for i in range(batch_size)]
+        attention_mask = torch.zeros(size=(batch_size, self.max_length,), dtype=torch.bool)
+        loss_mask = torch.zeros(size=(batch_size, self.max_length,), dtype=torch.bool)
+        for i in range(batch_size):
+            t, dt = len(batch['input_ids'][i]), len(batch['labels'][i])
+            attention_mask[i, :t+dt] = 1
+            loss_mask[i, t-1:t+dt-1] = True
+            input_ids[i] += [self.pad_token_id]*(self.max_length-t-dt)
+        input_ids = torch.tensor(input_ids, dtype=torch.int32)
+        # labels need to be of dtype long (=int64)
+        labels = torch.cat([torch.tensor(batch["labels"][i], dtype=torch.int64) for i in range(batch_size)])
+
+        return dict(
+            input_ids=input_ids.to(self.device), 
+            attention_mask=attention_mask.to(self.device), 
+            loss_mask=loss_mask.to(self.device), 
+            labels=labels.to(self.device)
+        )
+    
+class CustomDataLoader:
+    '''infinite dataloader with uniform (with replacement) sampling'''
+    def __init__(self, dataset, batch_size:int, collate_fn=None):
+        self.dataset = dataset
+        self.batch_size = batch_size
+        self.collate_fn = collate_fn
+        self.N = len(dataset)
+
+    def __len__(self):
+        return len(self.dataset) // self.batch_size
+    
+    def next_batch(self):
+        random_batch_indexes = torch.randint(0, self.N, size=(self.batch_size,))
+        if self.collate_fn is not None:
+            return self.collate_fn(self.dataset[random_batch_indexes])
+        else:
+            return self.dataset[random_batch_indexes]
 
 def get_tokenizer():
     from transformers import AutoTokenizer
@@ -60,6 +112,9 @@ if __name__ == "__main__":
     data_collator = DataCollator(pad_token_id=32000, max_length=256, device=device)
     train_loader = DataLoader(dataset=dataset["train"], batch_size=16, collate_fn=data_collator) # type: ignore
     batch = next(iter(train_loader))
+    collate_fn = CustomDataCollator(pad_token_id=32000, max_length=256, device=device)
+    loader = CustomDataLoader(dataset["train"], batch_size=16, collate_fn=collate_fn) # type: ignore
+    batch_ = loader.next_batch()
     import code; code.interact(local=locals())
 
 
