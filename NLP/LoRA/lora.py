@@ -104,7 +104,7 @@ def save_AB_weights_tinyllama(save_dir, model, target_layers=["q_proj","k_proj",
             torch.save(lora_layer.B.weight, os.path.join(save_dir, module_name+".B.pt"))
 
 
-def load_AB_weights_tinyllama(save_dir, model, target_layers):
+def load_AB_weights_tinyllama(save_dir, model, target_layers:list[str]):
     device = model.device
     n_layers = len(model.model.layers)
     for i in range(n_layers):
