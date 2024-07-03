@@ -1,4 +1,4 @@
-from lora import apply_LoRA_tinyllama, configure_optimizers, save_AB_weights_tinyllama
+from loralib import apply_LoRA_tinyllama, configure_optimizers, save_AB_weights_tinyllama
 from data_utils import get_tokenizer, preprocess_fn, CustomDataCollator, CustomDataLoader
 
 import torch
@@ -38,9 +38,8 @@ class TrainingCfg:
 @dataclass
 class ModelCfg:
     name:str
-    r:int
     alpha:float
-    target_layers:list[str]
+    target_layers_rank:dict
 
 @dataclass
 class Cfg:
@@ -104,6 +103,7 @@ def train():
     cfg = load_config(args.yaml_config)
     train_cfg = cfg.training
     model_cfg = cfg.model
+    max_r = max(model_cfg.target_layers_rank.values())
     print(f"Train config : {train_cfg}")
     print(f"Model config {model_cfg}")
     
@@ -137,7 +137,7 @@ def train():
     device_type = "cuda"
     print(f"Loading {model_cfg.name} ...")
     tokenizer = get_tokenizer()
-    model = apply_LoRA_tinyllama(target_layers=model_cfg.target_layers, r=model_cfg.r, new_vocsize=len(tokenizer))
+    model = apply_LoRA_tinyllama(target_layers_rank=model_cfg.target_layers_rank, new_vocsize=len(tokenizer))
     assert model.lm_head.weight.shape == model.model.embed_tokens.weight.shape
     model.to(device)
 
@@ -197,8 +197,8 @@ def train():
     # [NEXT TOKEN PREDICTION EVALUATION]
     # Evaluate before training, the baseline performance should be around 56% accuracy 
     # !!! This is not comparable to NLG tasks because here the model has access to the true previous tokens !!!
-    acc, val_loss, dt = evaluate(model, val_loader, loss_fn, train_cfg.use_autocast, device_type)
-    log_results(val_csv_file, [0., 0, tokens_processed, acc, val_loss, dt])
+    # acc, val_loss, dt = evaluate(model, val_loader, loss_fn, train_cfg.use_autocast, device_type)
+    # log_results(val_csv_file, [0., 0, tokens_processed, acc, val_loss, dt])
 
     for step in range(1, max_steps+1):
         model.train()
@@ -220,12 +220,12 @@ def train():
             train_loss += loss.item()
             tokens_processed += labels.size(0)
         norm = torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=train_cfg.max_grad_norm).item()
-        lr = get_lr(step) * model_cfg.alpha / model_cfg.r
+        lr = get_lr(step) * model_cfg.alpha / max_r
         optimizer.step()
         optimizer.zero_grad()
-        tok_per_sec = (tokens_processed - last_tokens_processed) / dt
         epoch = step/steps_per_epoch
         dt = time()-t0
+        tok_per_sec = (tokens_processed - last_tokens_processed) / dt
         # step-wise metrics
         print(f"Epoch: {epoch:2f} | Step: {step:4d} | tokens processed {tokens_processed:8d} | loss:{train_loss:.4f} | lr:{lr:.6f} | grad norm: {norm:.4f} | step dt: {dt:.4f}s | tok/sec {tok_per_sec:.4f}")
         log_results(train_csv_file, [epoch, step, tokens_processed, train_loss, lr, norm, dt, tok_per_sec])
@@ -236,15 +236,15 @@ def train():
             acc, val_loss, dt = evaluate(model, val_loader, loss_fn, train_cfg.use_autocast, device_type)
             log_results(val_csv_file, [epoch, step, tokens_processed, acc, val_loss, dt])
 
-        if step % save_every_n_steps ==0:
+        if step % save_every_n_steps == 0:
             print(f"Saving {step}-step model...")
-            save_AB_weights_tinyllama(os.path.join(run_dir, "model_weights", f"step{step}"), model, model_cfg.target_layers)
+            save_AB_weights_tinyllama(os.path.join(run_dir, "model_weights", f"step{step}"), model, list(model_cfg.target_layers_rank.keys()))
             print("Saved!")
             
     end = time() - start
     print(f"Total time : {end:.4f} | total tokens processed {tokens_processed:8d} | ratio: {tokens_processed/end:.4f}")
     print("Saving final model...")
-    save_AB_weights_tinyllama(os.path.join(run_dir, "model_weights", "final"), model, model_cfg.target_layers)
+    save_AB_weights_tinyllama(os.path.join(run_dir, "model_weights", "final"), model, list(model_cfg.target_layers_rank.keys()))
     print("Saved!")
             
 

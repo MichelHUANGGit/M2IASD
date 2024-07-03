@@ -1,8 +1,10 @@
 model:
   name: tinyllama1B_e2e_nlg
-  r: 2
   alpha: 1.0
-  target_layers: [q_proj, k_proj, v_proj, o_proj]
+  target_layers_rank:
+    mlp.gate_proj: 8
+    mlp.up_proj: 8
+    mlp.down_proj: 8
 
 training:
   precision: high
