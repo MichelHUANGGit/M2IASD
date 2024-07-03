@@ -33,7 +33,6 @@ class TrainingCfg:
     beta1:float
     beta2:float
     max_grad_norm:float
-    max_length:int
 
 @dataclass
 class ModelCfg:
@@ -161,7 +160,7 @@ def train():
     # data_collator = DataCollator(pad_token_id=tokenizer.pad_token_id, max_length=train_cfg.max_length, device=device)
     # train_loader = DataLoader(dataset["train"], batch_size=train_cfg.batch_size, collate_fn=data_collator) # type: ignore
     # val_loader = DataLoader(dataset["validation"], batch_size=train_cfg.batch_size, collate_fn=data_collator) # type: ignore
-    collate_fn = CustomDataCollator(pad_token_id=tokenizer.pad_token_id, max_length=train_cfg.max_length, device=device)
+    collate_fn = CustomDataCollator(pad_token_id=tokenizer.pad_token_id, device=device)
     train_loader = CustomDataLoader(dataset["train"], batch_size=train_cfg.batch_size, collate_fn=collate_fn) # type: ignore
     val_loader = CustomDataLoader(dataset["validation"], batch_size=train_cfg.batch_size, collate_fn=collate_fn) # type: ignore
     print("============================================================================================")
@@ -197,8 +196,8 @@ def train():
     # [NEXT TOKEN PREDICTION EVALUATION]
     # Evaluate before training, the baseline performance should be around 56% accuracy 
     # !!! This is not comparable to NLG tasks because here the model has access to the true previous tokens !!!
-    # acc, val_loss, dt = evaluate(model, val_loader, loss_fn, train_cfg.use_autocast, device_type)
-    # log_results(val_csv_file, [0., 0, tokens_processed, acc, val_loss, dt])
+    acc, val_loss, dt = evaluate(model, val_loader, loss_fn, train_cfg.use_autocast, device_type)
+    log_results(val_csv_file, [0., 0, tokens_processed, acc, val_loss, dt])
 
     for step in range(1, max_steps+1):
         model.train()
