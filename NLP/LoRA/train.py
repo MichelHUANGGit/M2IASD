@@ -1,5 +1,6 @@
 from loralib import apply_LoRA_tinyllama, configure_optimizers, save_AB_weights_tinyllama
-from data_utils import get_tokenizer, preprocess_fn, CustomDataCollator, CustomDataLoader
+from data_utils import get_tokenizer, get_loader
+from logs_utils import create_logs
 
 import torch
 import torch.nn as nn
@@ -35,6 +36,11 @@ class TrainingCfg:
     max_grad_norm:float
 
 @dataclass
+class DatasetCfg:
+    name:str
+    max_length:int
+
+@dataclass
 class ModelCfg:
     name:str
     alpha:float
@@ -44,6 +50,7 @@ class ModelCfg:
 class Cfg:
     model: ModelCfg
     training: TrainingCfg
+    dataset: DatasetCfg
 
 def load_config(config_path: str):
     with open(config_path, 'r') as file:
@@ -52,6 +59,7 @@ def load_config(config_path: str):
     return Cfg(
         model=ModelCfg(**config_dict['model']),
         training=TrainingCfg(**config_dict['training']),
+        dataset=DatasetCfg(**config_dict['dataset'])
     )
 
 def parse_args():
@@ -67,7 +75,7 @@ def log_results(csv_file, metrics_list):
         writer.writerow(metrics_list)
 
 @torch.no_grad
-def evaluate(model, loader:CustomDataLoader, loss_fn:nn.Module, use_autocast=True, device_type="cuda"):
+def evaluate(model, loader, loss_fn:nn.Module, use_autocast=False, device_type="cuda"):
     # [NEXT TOKEN PREDICTION EVALUATION]
     # !!! This is not comparable to NLG tasks because here the model has access to the true previous tokens !!!
     model.eval()
@@ -75,7 +83,7 @@ def evaluate(model, loader:CustomDataLoader, loss_fn:nn.Module, use_autocast=Tru
     correct = 0
     processed = 0
     t0 = time()
-    progress_bar = tqdm(range(1, len(loader)+1), unit='it')
+    progress_bar = tqdm(range(1, len(loader)+1), unit='batch')
     for i in progress_bar:
         batch = loader.next_batch()
         input_ids, attention_mask = batch["input_ids"], batch["attention_mask"]
@@ -102,34 +110,14 @@ def train():
     cfg = load_config(args.yaml_config)
     train_cfg = cfg.training
     model_cfg = cfg.model
+    dataset_cfg = cfg.dataset
     max_r = max(model_cfg.target_layers_rank.values())
     print(f"Train config : {train_cfg}")
     print(f"Model config {model_cfg}")
     
     # Metrics logs stuff
     # create directory
-    log_dir = args.log_dir
-    today = strftime("%Y-%m-%d")
-    i = 0
-    run_dir = os.path.join(log_dir, today, f"run{i}")
-    while os.path.exists(run_dir):
-        i += 1
-        run_dir = os.path.join(log_dir, today, f"run{i}")
-    os.makedirs(run_dir)
-    # create csv files for the losses
-    val_csv_file = os.path.join(run_dir, "val_log.csv")
-    with open(val_csv_file, "w", newline='') as file:
-        writer = csv.writer(file)
-        writer.writerow(["epoch", "step", "tokens_trained_on", "acc", "loss", "dt"])
-    train_csv_file = os.path.join(run_dir, "train_log.csv")
-    with open(train_csv_file, "w", newline='') as file:
-        writer = csv.writer(file)
-        writer.writerow(["epoch", "step", "tokens", "loss", "lr", "grad_norm", "dt", "tok_per_sec"])
-    # save the yaml config used
-    with open(os.path.join(run_dir, "config.yaml"), "w") as file:
-        yaml.dump(asdict(cfg), file)
-    print(f"Logs saved at {run_dir}!")
-    print("============================================================================================")
+    run_dir, train_csv_file, val_csv_file = create_logs(args.log_dir, cfg)
 
     #model and tokenizer
     device = torch.device("cuda")
@@ -153,19 +141,10 @@ def train():
     print("============================================================================================")
 
     #dataset
-    print("Loading dataset...")
-    dataset = load_dataset("tuetschek/e2e_nlg")
-    print("Preprocessing the dataset...")
-    dataset = dataset.map(preprocess_fn, fn_kwargs={"tokenizer":tokenizer})
-    # data_collator = DataCollator(pad_token_id=tokenizer.pad_token_id, max_length=train_cfg.max_length, device=device)
-    # train_loader = DataLoader(dataset["train"], batch_size=train_cfg.batch_size, collate_fn=data_collator) # type: ignore
-    # val_loader = DataLoader(dataset["validation"], batch_size=train_cfg.batch_size, collate_fn=data_collator) # type: ignore
-    collate_fn = CustomDataCollator(pad_token_id=tokenizer.pad_token_id, device=device)
-    train_loader = CustomDataLoader(dataset["train"], batch_size=train_cfg.batch_size, collate_fn=collate_fn) # type: ignore
-    val_loader = CustomDataLoader(dataset["validation"], batch_size=train_cfg.batch_size, collate_fn=collate_fn) # type: ignore
-    print("============================================================================================")
+    train_loader = get_loader(dataset_cfg.name, tokenizer=tokenizer, split="train", batch_size=train_cfg.batch_size, max_length=dataset_cfg.max_length, device=device, shuffle=True)
+    val_loader = get_loader(dataset_cfg.name, tokenizer=tokenizer, split="validation", batch_size=train_cfg.batch_size, max_length=dataset_cfg.max_length, device=device, shuffle=True)
 
-    N = len(dataset["train"]) # type: ignore
+    N = len(train_loader.dataset) # type: ignore
     steps_per_epoch = N / (train_cfg.batch_size * train_cfg.grad_accum_steps)
     warmup_steps = train_cfg.warmup_epochs * steps_per_epoch
     max_steps = round(train_cfg.epochs * steps_per_epoch)
@@ -226,7 +205,7 @@ def train():
         dt = time()-t0
         tok_per_sec = (tokens_processed - last_tokens_processed) / dt
         # step-wise metrics
-        print(f"Epoch: {epoch:2f} | Step: {step:4d} | tokens processed {tokens_processed:8d} | loss:{train_loss:.4f} | lr:{lr:.6f} | grad norm: {norm:.4f} | step dt: {dt:.4f}s | tok/sec {tok_per_sec:.4f}")
+        print(f"Epoch: {epoch:2f} | Step: {step:4d} | tokens processed {tokens_processed:8d} | loss:{train_loss:.4f} | lr:{lr:.4e} | grad norm: {norm:.4f} | step dt: {dt:.4f}s | tok/sec {tok_per_sec:.4f}")
         log_results(train_csv_file, [epoch, step, tokens_processed, train_loss, lr, norm, dt, tok_per_sec])
         last_tokens_processed = tokens_processed
         # import code; code.interact(local=locals())
