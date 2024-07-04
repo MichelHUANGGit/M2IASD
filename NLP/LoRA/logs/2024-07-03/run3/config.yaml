@@ -1,0 +1,28 @@
+model:
+  alpha: 1.0
+  name: tinyllama1B_e2e_nlg
+  target_layers_rank:
+    mlp.down_proj: 2
+    mlp.gate_proj: 2
+    mlp.up_proj: 2
+    self_attn.k_proj: 2
+    self_attn.o_proj: 2
+    self_attn.q_proj: 2
+    self_attn.v_proj: 2
+training:
+  batch_size: 32
+  beta1: 0.9
+  beta2: 0.98
+  epochs: 1.0
+  eval_every_x_epoch: 0.52
+  grad_accum_steps: 4
+  max_grad_norm: 2.0
+  max_lr: 1.0e-05
+  min_lr: 1.0e-06
+  precision: high
+  save_every_x_epoch: 0.52
+  use_autocast: false
+  use_compile: true
+  use_lr_scheduler: true
+  warmup_epochs: 0.2
+  weight_decay: 0.1
