@@ -99,7 +99,7 @@ if __name__ == "__main__":
     predictions_path = f'outputs/{args.split}_tuetscheck_e2e_nlg'
     references_path = f'outputs/{args.split}_tuetscheck_e2e_nlg'
     # predict_and_save(model, tokenizer, testset, device, predict_path=predictions_path, reference_path=references_path, save_reference=True)
-    measure_metrics(os.path.join(predictions_path, "predictions.json"), os.path.join(references_path, "references.json"), tokenizer=tokenizer)
+    measure_metrics(os.path.join(predictions_path, "predictions_text.json"), os.path.join(references_path, "references_text.json"), tokenizer=tokenizer)
         
 
 
