@@ -1,1 +1,0 @@
-epoch,step,tokens,loss,lr,grad_norm,dt,tok_per_sec

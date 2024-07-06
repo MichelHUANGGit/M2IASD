@@ -76,7 +76,7 @@ def log_results(csv_file:str, metrics_list:list) -> None:
 def create_logs(log_dir, cfg) -> tuple[str, str, str]:
     today = strftime("%Y-%m-%d")
     i = 0
-    run_dir = os.path.join(log_dir, today, f"run{i}")
+    run_dir = os.path.join(log_dir, cfg.dataset.name, today, f"run{i}")
     while os.path.exists(run_dir):
         i += 1
         run_dir = os.path.join(log_dir, today, f"run{i}")
@@ -100,7 +100,7 @@ def create_logs(log_dir, cfg) -> tuple[str, str, str]:
 @torch.no_grad
 def evaluate_next_token(model, loader) -> tuple[float, float, float]:
     # [NEXT TOKEN PREDICTION EVALUATION]
-    # !!! This is not comparable to NLG tasks because here the model has access to the true previous tokens !!!
+    # ! This is not comparable to NLG tasks because here the model has access to the true previous tokens !
     model.eval()
     val_loss = 0.
     correct = 0
@@ -175,7 +175,7 @@ def train():
     save_every_n_steps = round(train_cfg.save_every_x_epoch * steps_per_epoch)
     print(f"warmup steps: {int(warmup_steps)} | max_steps {max_steps} | Steps per epoch: {steps_per_epoch:.2f} | Eval every {eval_every_n_steps} steps | Save every {save_every_n_steps} steps")
 
-    def get_lr(step):
+    def get_lr(step:int) -> float:
         # Learning rate scheduling
         if train_cfg.use_lr_scheduler:
             '''from https://github.com/karpathy/build-nanogpt/blob/master/train_gpt2.py'''
