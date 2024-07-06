@@ -9,7 +9,7 @@ from time import time, strftime
 import yaml
 import argparse
 from dataclasses import dataclass, asdict
-from math import pi, cos
+from math import pi, cos, pow
 import os
 import csv
 from tqdm import tqdm
@@ -27,9 +27,10 @@ class TrainingCfg:
     use_compile:bool
     use_autocast:bool
     weight_decay:float
-    use_lr_scheduler:bool
+    use_cosine_decay:bool
     max_lr:float
     min_lr:float
+    lr_decay:float
     beta1:float
     beta2:float
     max_grad_norm:float
@@ -177,7 +178,7 @@ def train():
 
     def get_lr(step:int) -> float:
         # Learning rate scheduling
-        if train_cfg.use_lr_scheduler:
+        if train_cfg.use_cosine_decay:
             '''from https://github.com/karpathy/build-nanogpt/blob/master/train_gpt2.py'''
             # 1) linear warmup for warmup_iters steps
             if step < warmup_steps:
@@ -188,7 +189,7 @@ def train():
             coeff = 0.5 * (1.0 + cos(pi * decay_ratio)) # coeff starts at 1 and goes to 0
             return train_cfg.min_lr + coeff * (train_cfg.max_lr - train_cfg.min_lr)
         else:
-            return train_cfg.max_lr
+            return  train_cfg.max_lr * pow(step, train_cfg.lr_decay)
         
     def eval_(model, loader) -> tuple[float, float, float]:
         if dataset_cfg.name in "tuetschek":
@@ -225,7 +226,7 @@ def train():
             train_loss += loss.item()
             tokens_processed += labels.size(0)
         norm = torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=train_cfg.max_grad_norm).item()
-        lr = get_lr(step) * model_cfg.alpha / max_r
+        lr = get_lr(step)* model_cfg.alpha / max_r
         optimizer.step()
         optimizer.zero_grad()
         epoch = step/steps_per_epoch

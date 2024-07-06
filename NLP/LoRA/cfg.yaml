@@ -8,10 +8,10 @@ model:
     self_attn.o_proj: 2
 
 dataset:
-  # name: tuetschek
-  # max_length: 256
-  name: hellaswag
-  max_length: 192
+  name: tuetschek
+  max_length: 256
+  # name: hellaswag
+  # max_length: 192
 
 # 90% of tuetschek inputs are of length <400. use max_length=256 or 384
 # hellaswag inputs are of length < 192. use max_length=192
@@ -27,9 +27,10 @@ training:
   use_compile: true
   use_autocast: false #FIXME: doesn't work with compile during flash attn
   weight_decay: 0.10
-  use_lr_scheduler: true
+  use_cosine_decay: false
   max_lr: 5.0e-04
   min_lr: 5.0e-05
+  lr_decay: -0.5
   beta1: 0.90
   beta2: 0.98
   max_grad_norm: 5.0
