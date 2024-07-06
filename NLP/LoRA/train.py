@@ -1,11 +1,10 @@
 from loralib import apply_LoRA_tinyllama, configure_optimizers, save_AB_weights_tinyllama
 from data_utils import get_tokenizer, get_loader
-from logs_utils import create_logs
+from hellaswag import eval_hellaswag
 
 import torch
 import torch.nn as nn
 
-from datasets import load_dataset
 from time import time, strftime
 import yaml
 import argparse
@@ -52,7 +51,7 @@ class Cfg:
     training: TrainingCfg
     dataset: DatasetCfg
 
-def load_config(config_path: str):
+def load_config(config_path: str) -> Cfg:
     with open(config_path, 'r') as file:
         config_dict = yaml.safe_load(file)
     
@@ -62,20 +61,44 @@ def load_config(config_path: str):
         dataset=DatasetCfg(**config_dict['dataset'])
     )
 
-def parse_args():
+def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
     parser.add_argument('--yaml_config', type=str, default="cfg.yaml", help="yaml config path")
     parser.add_argument('--log_dir', type=str, default="logs", help="logs directory")
     args = parser.parse_args()
     return args
 
-def log_results(csv_file, metrics_list):
+def log_results(csv_file:str, metrics_list:list) -> None:
     with open(csv_file, "a", newline='') as file:
         writer = csv.writer(file)
         writer.writerow(metrics_list)
 
+def create_logs(log_dir, cfg) -> tuple[str, str, str]:
+    today = strftime("%Y-%m-%d")
+    i = 0
+    run_dir = os.path.join(log_dir, today, f"run{i}")
+    while os.path.exists(run_dir):
+        i += 1
+        run_dir = os.path.join(log_dir, today, f"run{i}")
+    os.makedirs(run_dir)
+    # create csv files for the losses
+    val_csv_file = os.path.join(run_dir, "val_log.csv")
+    with open(val_csv_file, "w", newline='') as file:
+        writer = csv.writer(file)
+        writer.writerow(["epoch", "step", "tokens_trained_on", "acc", "loss", "dt"])
+    train_csv_file = os.path.join(run_dir, "train_log.csv")
+    with open(train_csv_file, "w", newline='') as file:
+        writer = csv.writer(file)
+        writer.writerow(["epoch", "step", "tokens", "loss", "lr", "grad_norm", "dt", "tok_per_sec"])
+    # save the yaml config used
+    with open(os.path.join(run_dir, "config.yaml"), "w") as file:
+        yaml.dump(asdict(cfg), file)
+    print(f"Logs saved at {run_dir}!")
+    print("============================================================================================")
+    return run_dir, train_csv_file, val_csv_file
+
 @torch.no_grad
-def evaluate(model, loader, loss_fn:nn.Module, use_autocast=False, device_type="cuda"):
+def evaluate_next_token(model, loader) -> tuple[float, float, float]:
     # [NEXT TOKEN PREDICTION EVALUATION]
     # !!! This is not comparable to NLG tasks because here the model has access to the true previous tokens !!!
     model.eval()
@@ -87,14 +110,10 @@ def evaluate(model, loader, loss_fn:nn.Module, use_autocast=False, device_type="
     for i in progress_bar:
         batch = loader.next_batch()
         input_ids, attention_mask = batch["input_ids"], batch["attention_mask"]
-        if use_autocast:
-            with torch.autocast(device_type=device_type, dtype=torch.bfloat16):
-                logits = model(input_ids, attention_mask, use_cache=False)["logits"]
-        else:
-            logits = model(input_ids, attention_mask, use_cache=False)["logits"]
+        logits = model(input_ids, attention_mask, use_cache=False)["logits"]
         labels = batch["labels"]
         lmask = batch["loss_mask"]
-        loss = loss_fn(logits[lmask], labels)
+        loss = nn.functional.cross_entropy(logits[lmask], labels)
         val_loss = (val_loss * (i-1) + loss.item()) / i
         correct += torch.sum(logits[lmask].argmax(dim=1) == labels).item()
         processed += len(labels)
@@ -103,8 +122,12 @@ def evaluate(model, loader, loss_fn:nn.Module, use_autocast=False, device_type="
         progress_bar.set_description(f"acc: {acc*100:.2f}% | loss:{val_loss:.4f}")
     dt = time() - t0
     return acc, val_loss, dt
-    
+
 def train():
+    torch.manual_seed(0)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed(0)
+
     #Config stuff
     args = parse_args()
     cfg = load_config(args.yaml_config)
@@ -150,7 +173,7 @@ def train():
     max_steps = round(train_cfg.epochs * steps_per_epoch)
     eval_every_n_steps = round(train_cfg.eval_every_x_epoch * steps_per_epoch)
     save_every_n_steps = round(train_cfg.save_every_x_epoch * steps_per_epoch)
-    print(f"warmup steps: {warmup_steps:.2f} | max_steps {max_steps} | Steps per epoch: {steps_per_epoch:.2f} | Eval every {eval_every_n_steps} steps | Save every {save_every_n_steps} steps")
+    print(f"warmup steps: {int(warmup_steps)} | max_steps {max_steps} | Steps per epoch: {steps_per_epoch:.2f} | Eval every {eval_every_n_steps} steps | Save every {save_every_n_steps} steps")
 
     def get_lr(step):
         # Learning rate scheduling
@@ -166,16 +189,20 @@ def train():
             return train_cfg.min_lr + coeff * (train_cfg.max_lr - train_cfg.min_lr)
         else:
             return train_cfg.max_lr
-    
+        
+    def eval_(model, loader) -> tuple[float, float, float]:
+        if dataset_cfg.name in "tuetschek":
+            acc, loss, dt = evaluate_next_token(model, loader)
+        elif dataset_cfg.name == "hellaswag":
+            acc, loss, dt = eval_hellaswag(model, loader)
+        return acc, loss, dt
+
     print("Begin Training")
     print("============================================================================================")
     start = time()
     tokens_processed = 0
     last_tokens_processed = tokens_processed
-    # [NEXT TOKEN PREDICTION EVALUATION]
-    # Evaluate before training, the baseline performance should be around 56% accuracy 
-    # !!! This is not comparable to NLG tasks because here the model has access to the true previous tokens !!!
-    acc, val_loss, dt = evaluate(model, val_loader, loss_fn, train_cfg.use_autocast, device_type)
+    acc, val_loss, dt = eval_(model, val_loader)
     log_results(val_csv_file, [0., 0, tokens_processed, acc, val_loss, dt])
 
     for step in range(1, max_steps+1):
@@ -211,7 +238,7 @@ def train():
         # import code; code.interact(local=locals())
 
         if step % eval_every_n_steps == 0:
-            acc, val_loss, dt = evaluate(model, val_loader, loss_fn, train_cfg.use_autocast, device_type)
+            acc, val_loss, dt = eval_(model, val_loader)
             log_results(val_csv_file, [epoch, step, tokens_processed, acc, val_loss, dt])
 
         if step % save_every_n_steps == 0:

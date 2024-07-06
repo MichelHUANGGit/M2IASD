@@ -32,10 +32,10 @@ class CustomDataLoader:
             
         
 def get_loader(name, tokenizer, split, batch_size, max_length, device, shuffle):
-    assert name in ["tuetscheck", "hellaswag"]
+    assert name in ["tuetscheck", "tuetschek", "hellaswag"]
 
-    if name == "tuetscheck":
-        print(f"Loading and preprocessing the {name} dataset...")
+    if name == "tuetscheck" or name == "tuetschek":
+        print(f"Loading and preprocessing the {split} tuetschek dataset...")
         from tuetschek import load_preprocessed_tuetschek, DataCollatorTuetschek
         dataset = load_preprocessed_tuetschek(tokenizer=tokenizer, split=split)
         collate_fn = DataCollatorTuetschek(tokenizer.pad_token_id, device=device, max_length=max_length)
@@ -43,7 +43,7 @@ def get_loader(name, tokenizer, split, batch_size, max_length, device, shuffle):
         print("============================================================================================")
     
     elif name == "hellaswag":
-        print(f"Loading and preprocessing the {name} dataset...")
+        print(f"Loading and preprocessing the {split} hellaswag dataset...")
         from hellaswag import load_preprocessed_hellaswag, DataCollatorHellaswagTrain, DataCollatorHellaswagVal
         dataset = load_preprocessed_hellaswag(tokenizer=tokenizer, split=split)
         if split == "train":

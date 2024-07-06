@@ -1,10 +1,17 @@
 model:
-  name: tinyllama1B_e2e_nlg
+  name: tinyllama1B
   alpha: 1.0
   target_layers_rank:
     mlp.gate_proj: 8
     mlp.up_proj: 8
     mlp.down_proj: 8
+
+dataset:
+  name: tuetschek
+  max_length: 256
+
+# 90% of tuetschek inputs are of length <400. use max_length=256 or 384
+# hellaswag inputs are of length < 192. use max_length=192
 
 training:
   precision: high
@@ -18,7 +25,7 @@ training:
   use_autocast: false #FIXME: doesn't work with compile during flash attn
   weight_decay: 0.10
   use_lr_scheduler: true
-  max_lr: 0.0001
+  max_lr: 5.0e-04
   min_lr: 5.0e-05
   beta1: 0.95
   beta2: 0.99
