@@ -59,10 +59,10 @@ if __name__ == "__main__":
     args = dict(
         name = "hellaswag",
         tokenizer = get_tokenizer(),
-        split = "validation",
-        batch_size = 16,
+        split = "train",
+        batch_size = 1,
         max_length = 192,
-        device = torch.device("cuda"),
+        device = torch.device("cpu"),
         shuffle = True,
     )
     loader = get_loader(**args)

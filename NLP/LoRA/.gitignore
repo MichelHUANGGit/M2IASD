@@ -2,7 +2,6 @@ __pycache__/
 test.ipynb
 logs/
 debug_logs/
-tinyllama.ipynb
 debugcfg.yaml
 glue_data/
 train.sh

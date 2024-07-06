@@ -5,6 +5,9 @@ model:
     mlp.down_proj: 8
     mlp.gate_proj: 8
     mlp.up_proj: 8
+dataset:
+  name: tuetschek
+  max_length: 256
 training:
   batch_size: 32
   beta1: 0.95

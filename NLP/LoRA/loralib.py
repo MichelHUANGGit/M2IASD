@@ -3,7 +3,7 @@ import torch.nn as nn
 from transformers import AutoModelForCausalLM
 import inspect
 import os
-
+import yaml
 
 class LoRA_Linear(nn.Module):
 
@@ -162,6 +162,19 @@ def configure_optimizers(model, weight_decay, learning_rate, betas, device_type)
     use_fused = fused_available and device_type == "cuda"
     optimizer = torch.optim.AdamW(optim_groups, lr=learning_rate, betas=betas, eps=1e-8, fused=use_fused)
     return optimizer
+
+
+def load_finetuned_tinyllama(run_path):
+    
+    model_path = os.path.join(run_path, "model_weights","final")
+    with open(os.path.join(run_path, "config.yaml"), "r") as file:
+        config_dict =  yaml.safe_load(file)
+    model_cfg = config_dict['model']
+    layers_rank = model_cfg["target_layers_rank"]
+    model = apply_LoRA_tinyllama(target_layers_rank=layers_rank, new_vocsize=32001)
+    load_AB_weights_tinyllama(model_path, model, target_layers=list(layers_rank.keys()))
+    merge_tinyllama(model, target_layers=list(layers_rank.keys()))
+    return model
 
 if __name__ == "__main__":
     # works with a 4GB memory GPU

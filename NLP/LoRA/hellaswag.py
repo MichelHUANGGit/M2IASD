@@ -138,15 +138,8 @@ def eval_hellaswag(model, val_loader) -> tuple[float, float, float]:
     return acc, avg_loss, dt
 
 if __name__ == "__main__":
-    # args = dict(
-    #     tokenizer = ,
-    #     split = "train",
-    #     batch_size = 16,
-    #     max_length = 192,
-    #     device = torch.device("cpu"),
-    #     shuffle = True,
-    # )
-    # loader = get_loader(**args)
-    # batch = loader.next_batch()
-    # import code; code.interact(local=locals())
-    ...
+    from data_utils import get_tokenizer
+    tokenizer = get_tokenizer()
+    dataset=  load_preprocessed_hellaswag(tokenizer, "train")
+    x = dataset[0]
+    import code;code.interact(local=locals())
