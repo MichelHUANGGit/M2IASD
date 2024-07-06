@@ -19,7 +19,7 @@ class LoRA_Linear(nn.Module):
         self.A = nn.Linear(in_features=r, out_features=self.output_dim, bias=False)
         self.A.weight = nn.init.normal_(self.A.weight)
 
-    def forward(self, x:torch.Tensor):
+    def forward(self, x:torch.Tensor) -> torch.Tensor:
         # print("x", x.shape)
         # print("B", self.B.weight.shape)
         # print("A", self.A.weight.shape)
@@ -116,7 +116,7 @@ def merge_tinyllama(model:nn.Module, target_layers:list[str]):
             model.model.layers[i].mlp.down_proj = lora_layer.base_layer
 
 
-def save_AB_weights_tinyllama(save_dir, model, target_layers:list[str]):
+def save_AB_weights_tinyllama(save_dir, model, target_layers:list[str]) -> None:
     n_layers = len(model.model.layers)
     if not os.path.exists(save_dir):
         os.makedirs(save_dir)
@@ -129,7 +129,7 @@ def save_AB_weights_tinyllama(save_dir, model, target_layers:list[str]):
             torch.save(lora_layer.B.weight, os.path.join(save_dir, module_name+".B.pt"))
 
 
-def load_AB_weights_tinyllama(save_dir, model, target_layers:list[str]):
+def load_AB_weights_tinyllama(save_dir, model, target_layers:list[str]) -> None:
     device = model.device
     n_layers = len(model.model.layers)
     for i in range(n_layers):
