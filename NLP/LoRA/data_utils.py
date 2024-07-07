@@ -50,7 +50,7 @@ def get_loader(name, tokenizer, split, batch_size, max_length, device, shuffle):
 
     elif name == "opus100":
         from opus100 import load_preprocessed_opus100, DataCollatorOpus100
-        dataset = load_preprocessed_opus100(tokenizer=tokenizer, split=split)
+        dataset = load_preprocessed_opus100(tokenizer=tokenizer, split=split, max_length=max_length)
         collate_fn = DataCollatorOpus100(tokenizer.pad_token_id, device=device, max_length=max_length, batch_size=batch_size)
 
     loader = CustomDataLoader(dataset, batch_size=batch_size, collate_fn=collate_fn, shuffle=shuffle)
@@ -64,7 +64,7 @@ if __name__ == "__main__":
         tokenizer = get_tokenizer(),
         split = "train",
         batch_size = 2,
-        max_length = 192,
+        max_length = 256,
         device = torch.device("cpu"),
         shuffle = True,
     )

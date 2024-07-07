@@ -4,5 +4,6 @@ logs/
 debug_logs/
 debugcfg.yaml
 glue_data/
+eval_e2e.py
 train.sh
 download_glue_data.py

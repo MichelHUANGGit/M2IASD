@@ -4,10 +4,8 @@ Guidethrough the code:
 the important files are:
 - **loralib.py** contains LoRA-related utilities such as, a LoRA-Linear nn.Module, a function that applies LoRA on some layers of tinyllama 1B, and save/load/merge util functions.
 
-- **hellaswag.py** contains utilities functions to load/preprocess the hellaswag dataset (for training and evaluation). + eval function
-
-- **tuetschek.py** contains utilities functions to load/preprocess the tuetschek/e2e_nlg dataset
-
+- **e2e.py, opus100.py, hellaswag.py, data_utils.py** contains utilities functions to load/preprocess the tuetschek/e2e_nlg, the Helsinki-NLP/opus-100 en-fr, and the hellaswag dataset. Task: **e2e:Generation, opus100:Translation, hellaswag:Multiple choice**
+  
 - **train.py** is the complete pipeline to train tinyllama
 
 <br>
