@@ -8,10 +8,12 @@ model:
     self_attn.o_proj: 2
 
 dataset:
-  name: tuetschek
-  max_length: 256
+  # name: e2e
+  # max_length: 256
   # name: hellaswag
   # max_length: 192
+  name: opus100
+  max_length: 256
 
 # 90% of tuetschek inputs are of length <400. use max_length=256 or 384
 # hellaswag inputs are of length < 192. use max_length=192
@@ -22,7 +24,7 @@ training:
   grad_accum_steps: 4
   epochs: 1.5
   warmup_epochs: 0.5
-  eval_every_x_epoch: 0.8
+  eval_every_x_epoch: 0.7
   save_every_x_epoch: 0.8
   use_compile: true
   use_autocast: false #FIXME: doesn't work with compile during flash attn
@@ -33,4 +35,4 @@ training:
   lr_decay: -0.5
   beta1: 0.90
   beta2: 0.98
-  max_grad_norm: 5.0
+  max_grad_norm: 10.0

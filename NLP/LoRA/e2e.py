@@ -5,14 +5,14 @@ from tqdm import tqdm
 import os
 import json
 
-def preprocess_fn_tuetschek(sample, tokenizer):
+def preprocess_fn_e2e(sample, tokenizer):
     input_ids = tokenizer.encode(sample["meaning_representation"] + "\n Description:\n")
     labels = tokenizer.encode(sample["human_reference"] + "</s>", add_special_tokens=False)
     return dict(input_ids=input_ids, labels=labels)
 
-def load_preprocessed_tuetschek(tokenizer, split='validation'):
+def load_preprocessed_e2e(tokenizer, split='validation'):
     dataset = load_dataset(path="tuetschek/e2e_nlg")
-    dataset = dataset.map(preprocess_fn_tuetschek, fn_kwargs={"tokenizer":tokenizer})
+    dataset = dataset.map(preprocess_fn_e2e, fn_kwargs={"tokenizer":tokenizer})
     return dataset[split]#type: ignore
 
 class DataCollator:
@@ -49,7 +49,7 @@ class DataCollator:
             labels=labels.to(self.device)
         )
     
-class DataCollatorTuetschek:
+class DataCollatore2e:
     '''
     what we want:
     - For 'input_ids'
@@ -72,7 +72,6 @@ class DataCollatorTuetschek:
     def __call__(self, batch:dict):
         batch_size = len(batch['input_ids'])
         input_ids = [batch['input_ids'][i] + batch['labels'][i] for i in range(batch_size)]
-        # max_length = max(len(input_ids[i]) for i in range(batch_size)) # Maximum length of the batch
         attention_mask = torch.zeros(size=(batch_size, self.max_length), dtype=torch.bool)
         loss_mask = torch.zeros(size=(batch_size, self.max_length), dtype=torch.bool)
         for i in range(batch_size):
@@ -91,7 +90,7 @@ class DataCollatorTuetschek:
             labels=labels.to(self.device)
         )
     
-def predict_and_save(model, tokenizer, dataset, predict_path:str, reference_path:str, save_reference=True, **kwargs):
+def predict_and_save(model, tokenizer, dataset, predict_path:str, reference_path:str, generate_kwargs:dict, save_reference=True):
     predictions = dict()
     references = dict()
     device = torch.device("cuda")
@@ -99,7 +98,7 @@ def predict_and_save(model, tokenizer, dataset, predict_path:str, reference_path
     for i in tqdm(range(len(dataset))):
         text = dataset[i]["meaning_representation"] + "\n Description:\n"
         inputs = tokenizer(text, return_tensors='pt').to(device)
-        outputs = model.generate(**inputs, **kwargs)
+        outputs = model.generate(**inputs, **generate_kwargs, use_cache=True)
         # Only take the description part of the output, that is everything after '\n Description:\n' except the last EOS token
         predictions[i] = tokenizer.decode(outputs[0][len(inputs['input_ids'][0]):-1]).split()
         if save_reference:
@@ -131,20 +130,21 @@ if __name__ == "__main__":
     model = load_finetuned_tinyllama(args.run_path)
     device = torch.device("cuda")
     model.to(device)
-    testset = load_preprocessed_tuetschek(tok, args.split)
-    predictions_path = f'outputs/{args.split}_tuetschek_e2e_nlg'
-    references_path = f'outputs/{args.split}_tuetschek_e2e_nlg'
+    testset = load_preprocessed_e2e(tok, args.split)
+    predictions_path = f'outputs/{args.split}_e2e_nlg'
+    references_path = f'outputs/{args.split}_e2e_nlg'
     predict_and_save(
         model=model, 
         tokenizer=tok, 
         dataset=testset, 
-        device=device, 
         predict_path=predictions_path, 
         reference_path=references_path, 
-        save_reference=True, 
-        max_new_tokens=250,
-        do_sample=False,
-        num_beams=5
+        save_reference=True,
+        generate_kwargs={
+            "max_new_tokens":100,
+            "do_sample":False,
+            "num_beams":5
+        }
     )
 
 

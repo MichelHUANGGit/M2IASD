@@ -192,7 +192,7 @@ def train():
             return  train_cfg.max_lr * pow(step, train_cfg.lr_decay)
         
     def eval_(model, loader) -> tuple[float, float, float]:
-        if dataset_cfg.name in "tuetschek":
+        if dataset_cfg.name == "e2e" or dataset_cfg.name == "opus100":
             acc, loss, dt = evaluate_next_token(model, loader)
         elif dataset_cfg.name == "hellaswag":
             acc, loss, dt = eval_hellaswag(model, loader)
