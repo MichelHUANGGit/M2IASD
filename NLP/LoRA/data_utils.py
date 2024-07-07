@@ -32,7 +32,7 @@ class CustomDataLoader:
             
         
 def get_loader(name, tokenizer, split, batch_size, max_length, device, shuffle):
-    assert name in ["e2e", "hellaswag", "opus100"]
+    assert name in ["e2e", "hellaswag", "opus100_FR2EN", "opus100_EN2FR"]
     
     print(f"Loading and preprocessing the {split} {name} dataset...")
     if name == "e2e":
@@ -48,9 +48,14 @@ def get_loader(name, tokenizer, split, batch_size, max_length, device, shuffle):
         elif split == "validation":
             collate_fn = DataCollatorHellaswagVal(tokenizer.pad_token_id, device=device, max_length=max_length, batch_size=batch_size)
 
-    elif name == "opus100":
+    elif name == "opus100_FR2EN":
         from opus100 import load_preprocessed_opus100, DataCollatorOpus100
-        dataset = load_preprocessed_opus100(tokenizer=tokenizer, split=split, max_length=max_length)
+        dataset = load_preprocessed_opus100(tokenizer=tokenizer, split=split, max_length=max_length, mode="FR2EN")
+        collate_fn = DataCollatorOpus100(tokenizer.pad_token_id, device=device, max_length=max_length, batch_size=batch_size)
+
+    elif name == "opus100_EN2FR":
+        from opus100 import load_preprocessed_opus100, DataCollatorOpus100
+        dataset = load_preprocessed_opus100(tokenizer=tokenizer, split=split, max_length=max_length, mode="EN2FR")
         collate_fn = DataCollatorOpus100(tokenizer.pad_token_id, device=device, max_length=max_length, batch_size=batch_size)
 
     loader = CustomDataLoader(dataset, batch_size=batch_size, collate_fn=collate_fn, shuffle=shuffle)
@@ -60,7 +65,7 @@ def get_loader(name, tokenizer, split, batch_size, max_length, device, shuffle):
 
 if __name__ == "__main__":
     args = dict(
-        name = "opus100",
+        name = "opus100_FR2EN",
         tokenizer = get_tokenizer(),
         split = "train",
         batch_size = 2,

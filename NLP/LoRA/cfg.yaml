@@ -12,7 +12,7 @@ dataset:
   # max_length: 256
   # name: hellaswag
   # max_length: 192
-  name: opus100
+  name: opus100_BE2EN
   max_length: 256
 
 # 90% of tuetschek inputs are of length <400. use max_length=256 or 384
