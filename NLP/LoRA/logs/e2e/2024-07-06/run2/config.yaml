@@ -1,6 +1,6 @@
 dataset:
   max_length: 256
-  name: tuetschek
+  name: e2e
 model:
   alpha: 1.0
   name: tinyllama1B
