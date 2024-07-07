@@ -21,7 +21,7 @@ def preprocess_fn_opus100(sample, tokenizer, max_length, mode="FR2EN"):
             padding="max_length",
             truncation=True,
         )
-        t = len(tokenizer.encode(sample["translation"]["en"] + "\n Translation:\n"))
+        t = len(tokenizer.encode(sample["translation"]["en"] + "\n Traduction:\n"))
         T = sum(tokenized["attention_mask"])
         labels = tokenized['input_ids'][t:T]
     return dict(

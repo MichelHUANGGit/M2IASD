@@ -80,7 +80,7 @@ def create_logs(log_dir, cfg) -> tuple[str, str, str]:
     run_dir = os.path.join(log_dir, cfg.dataset.name, today, f"run{i}")
     while os.path.exists(run_dir):
         i += 1
-        run_dir = os.path.join(log_dir, today, f"run{i}")
+        run_dir = os.path.join(log_dir, cfg.dataset.name, today, f"run{i}")
     os.makedirs(run_dir)
     # create csv files for the losses
     val_csv_file = os.path.join(run_dir, "val_log.csv")
@@ -192,7 +192,7 @@ def train():
             return  train_cfg.max_lr * pow(step, train_cfg.lr_decay)
         
     def eval_(model, loader) -> tuple[float, float, float]:
-        if dataset_cfg.name == "e2e" or dataset_cfg.name == "opus100_FR2EN" or dataset_cfg.name == "opus100_EN2_FR":
+        if dataset_cfg.name == "e2e" or dataset_cfg.name == "opus100_FR2EN" or dataset_cfg.name == "opus100_EN2FR":
             acc, loss, dt = evaluate_next_token(model, loader)
         elif dataset_cfg.name == "hellaswag":
             acc, loss, dt = eval_hellaswag(model, loader)
