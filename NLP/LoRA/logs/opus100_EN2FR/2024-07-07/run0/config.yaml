@@ -1,0 +1,29 @@
+dataset:
+  max_length: 256
+  name: opus100_EN2FR
+model:
+  alpha: 1.0
+  name: tinyllama1B
+  target_layers_rank:
+    self_attn.k_proj: 8
+    self_attn.o_proj: 8
+    self_attn.q_proj: 8
+    self_attn.v_proj: 8
+training:
+  batch_size: 32
+  beta1: 0.9
+  beta2: 0.98
+  epochs: 1.5
+  eval_every_x_epoch: 0.7
+  grad_accum_steps: 4
+  lr_decay: -0.5
+  max_grad_norm: 10.0
+  max_lr: 5.0e-05
+  min_lr: 5.0e-05
+  precision: high
+  save_every_x_epoch: 0.8
+  use_autocast: false
+  use_compile: true
+  use_cosine_decay: false
+  warmup_epochs: 0.5
+  weight_decay: 0.1
