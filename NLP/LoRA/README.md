@@ -1,4 +1,7 @@
-Re-implementation of the LoRA paper. The goal was not only to re-implement the method, but conduct experiences that complement those shown in the paper.
+Re-implementation of the LoRA paper. The goal was not only to re-implement the method, but conduct experiences that complement those shown in the paper:
+1. Applying LoRA to a different model (e.g. tinyllama 1B)
+2. Apllying LoRA to Linear layers in the MLP block.
+3. Finetuning with LoRA on a dataset in a different language than English
 
 
 **Guidethrough the code**:
